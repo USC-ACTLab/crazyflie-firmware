@@ -25,6 +25,10 @@ static ControllerFcns controllerFunctions[] = {
 
 
 void controllerInit(ControllerType controller) {
+  if (controller < 0 || controller >= ControllerType_COUNT) {
+    return;
+  }
+
   currentController = controller;
 
   if (ControllerTypeAny == currentController) {
