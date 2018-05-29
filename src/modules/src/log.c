@@ -753,6 +753,32 @@ int logGetVarId(char* group, char* name)
   return -1;
 }
 
+int logGetType(int varid)
+{
+  return logs[varid].type;
+}
+
+void logGetGroupAndName(int varid, char** group, char** name)
+{
+  char * currgroup = "";
+  *group = 0;
+  *name = 0;
+
+  for(int i=0; i<logsLen; i++) {
+    if (logs[i].type & LOG_GROUP) {
+      if (logs[i].type & LOG_START) {
+        currgroup = logs[i].name;
+      }
+    }
+
+    if (i == varid) {
+      *group = currgroup;
+      *name = logs[i].name;
+      break;
+    }
+  }
+}
+
 int logGetInt(int varid)
 {
   int valuei = 0;

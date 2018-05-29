@@ -34,6 +34,7 @@
 
 #include <stdint.h>
 #include <string.h>
+#include <stdlib.h>
 #include "stm32fxxx.h"
 
 #include "FreeRTOS.h"
@@ -202,9 +203,67 @@ static void usdInit(DeckInfo *info)
         {
           DEBUG_PRINT("mount SD-Card [OK].\n");
           /* try to open config file */
-          if (f_open(&logFile, "config", FA_READ) == FR_OK)
+          bool success = false;
+          while (f_open(&logFile, "config.txt", FA_READ) == FR_OK)
             {
               /* try to read configuration */
+              char readBuffer[32];
+              char* endptr;
+              TCHAR* line = f_gets(readBuffer, sizeof(readBuffer), &logFile);
+              if (!line) break;
+              usdLogConfig.frequency = strtol(line, &endptr, 10);
+              // strtol(line, &usdLogConfig.frequency, 10);
+              line = f_gets(readBuffer, sizeof(readBuffer), &logFile);
+              if (!line) break;
+              usdLogConfig.bufferSize = strtol(line, &endptr, 10);
+              // strtol(line, &usdLogConfig.bufferSize, 10);
+              line = f_gets(usdLogConfig.filename, sizeof(usdLogConfig.filename), &logFile);
+              if (!line) break;
+
+              int l = strlen(usdLogConfig.filename);
+              if (l > sizeof(usdLogConfig.filename) - 2) {
+                l = sizeof(usdLogConfig.filename) - 2;
+              }
+              usdLogConfig.filename[l-1] = '0';
+              usdLogConfig.filename[l] = '0';
+              usdLogConfig.filename[l+1] = 0;
+
+              usdLogConfig.floatSlots = 0;
+              usdLogConfig.intSlots = 0;
+              while (line) {
+                line = f_gets(readBuffer, sizeof(readBuffer), &logFile);
+                if (!line) break;
+                char* group = line;
+                char* name = 0;
+                for (int i = 0; i < strlen(line); ++i) {
+                  if (line[i] == '.') {
+                    line[i] = 0;
+                    name = &line[i+1];
+                    i = strlen(name);
+                    if (name[i-1] == '\n') {
+                      name[i-1] = 0; // remove newline at the end
+                    }
+                    break;
+                  }
+                }
+                int varid = logGetVarId(group, name);
+                if (varid == -1) {
+                  DEBUG_PRINT("Unknown log variable %s.%s.\n", group, name);
+                  continue;
+                }
+
+                if (logGetType(varid) == LOG_FLOAT) {
+                  ++usdLogConfig.floatSlots;
+                } else {
+                  ++usdLogConfig.intSlots;
+                }
+              }
+
+
+              ///
+#if 0
+
+
               char readBuffer[5];
               unsigned int bytesRead;
               if (f_read(&logFile, readBuffer, 4, &bytesRead) == FR_OK)
@@ -226,9 +285,9 @@ static void usdInit(DeckInfo *info)
                       usdLogConfig.filename[bytesRead + 1] = '0';
                       usdLogConfig.filename[bytesRead + 2] = '\0';
                   }
-
+#endif
                   f_close(&logFile);
-
+#if 0
                   usdLogConfig.floatSlots =
                       ((usdLogConfig.items & USDLOG_ACC) ? 3 : 0)
 #ifdef LOG_SEC_IMU
@@ -245,18 +304,23 @@ static void usdInit(DeckInfo *info)
 
                   usdLogConfig.intSlots =
                       ((usdLogConfig.items & USDLOG_RANGE) ? 1 : 0);
-
+#endif
                   DEBUG_PRINT("Config read [OK].\n");
                   DEBUG_PRINT("Frequency: %dHz. Buffer size: %d\n",
                               usdLogConfig.frequency, usdLogConfig.bufferSize);
                   DEBUG_PRINT("Filename: %s.\n", usdLogConfig.filename);
+                  DEBUG_PRINT("slots: %d, %d.\n", usdLogConfig.floatSlots, usdLogConfig.intSlots);
 
                   /* create usd-log task */
                   xTaskCreate(usdLogTask, USDLOG_TASK_NAME,
                               USDLOG_TASK_STACKSIZE, NULL,
                               USDLOG_TASK_PRI, NULL);
+
+                  success = true;
+                  break;
                 }
-              else
+            
+            if (!success) {
                 DEBUG_PRINT("Config read [FAIL].\n");
             }
         }
@@ -266,140 +330,77 @@ static void usdInit(DeckInfo *info)
   isInit = true;
 }
 
-/* checks if log ids are in usual range */
-static bool checkLogIds(int* idsPtr, uint8_t idsToAdd) {
-  for (int* id = idsPtr; id < idsPtr+idsToAdd; id++) {
-      if (*id < 0)
-        return false;
-  }
-  return true;
-}
-
 static void usdLogTask(void* prm)
 {
-  int floatIds[usdLogConfig.floatSlots];
-  int intIds[usdLogConfig.intSlots];
-  {
-    uint8_t usedSlots = 0;
-    /* acquire log ids */
-    DEBUG_PRINT("Log items:\n");
-    if (usdLogConfig.items & USDLOG_ACC) {
-        floatIds[0] = logGetVarId("acc", "x");
-        floatIds[1] = logGetVarId("acc", "y");
-        floatIds[2] = logGetVarId("acc", "z");
-        if (checkLogIds(&floatIds[usedSlots], 3))
-          {
-            usedSlots += 3;
-            DEBUG_PRINT("* Accel\n");
-        }
-        else
-          usdLogConfig.items &= ~USDLOG_ACC;
-    }
-#ifdef LOG_SEC_IMU
-    if (usdLogConfig.items & USDLOG_ACC)
-      {
-        floatIds[0 + usedSlots] = logGetVarId("accSec", "x");
-        floatIds[1 + usedSlots] = logGetVarId("accSec", "y");
-        floatIds[2 + usedSlots] = logGetVarId("accSec", "z");
-        if (checkLogIds(&floatIds[usedSlots], 3))
-          usedSlots += 3;
-    }
-#endif
-    if (usdLogConfig.items & USDLOG_GYRO)
-      {
-        floatIds[0 + usedSlots] = logGetVarId("gyro", "x");
-        floatIds[1 + usedSlots] = logGetVarId("gyro", "y");
-        floatIds[2 + usedSlots] = logGetVarId("gyro", "z");
-        if (checkLogIds(&floatIds[usedSlots], 3))
-          {
-            usedSlots += 3;
-            DEBUG_PRINT("* Gyro\n");
-        }
-        else
-          usdLogConfig.items &= ~USDLOG_GYRO;
-    }
-#ifdef LOG_SEC_IMU
-    if (usdLogConfig.items & USDLOG_GYRO)
-      {
-        floatIds[0 + usedSlots] = logGetVarId("gyroSec", "x");
-        floatIds[1 + usedSlots] = logGetVarId("gyroSec", "y");
-        floatIds[2 + usedSlots] = logGetVarId("gyroSec", "z");
-        if (checkLogIds(&floatIds[usedSlots], 3))
-          usedSlots += 3;
-    }
-#endif
-    if (usdLogConfig.items & USDLOG_BARO)
-      {
-        floatIds[0 + usedSlots] = logGetVarId("baro", "asl");
-        floatIds[1 + usedSlots] = logGetVarId("baro", "temp");
-        floatIds[2 + usedSlots] = logGetVarId("baro", "pressure");
-        if (checkLogIds(&floatIds[usedSlots], 3))
-          {
-            usedSlots += 3;
-            DEBUG_PRINT("* Baro\n");
-        }
-        else
-          usdLogConfig.items &= ~USDLOG_BARO;
-    }
-    if (usdLogConfig.items & USDLOG_MAG)
-      {
-        floatIds[0 + usedSlots] = logGetVarId("mag", "x");
-        floatIds[1 + usedSlots] = logGetVarId("mag", "y");
-        floatIds[2 + usedSlots] = logGetVarId("mag", "z");
-        if (checkLogIds(&floatIds[usedSlots], 3))
-          {
-            usedSlots += 3;
-            DEBUG_PRINT("* Mag\n");
-        }
-        else
-          usdLogConfig.items &= ~USDLOG_MAG;
-    }
-    if (usdLogConfig.items & USDLOG_STABILIZER)
-      {
-        floatIds[0 + usedSlots] = logGetVarId("stabilizer", "roll");
-        floatIds[1 + usedSlots] = logGetVarId("stabilizer", "pitch");
-        floatIds[2 + usedSlots] = logGetVarId("stabilizer", "yaw");
-        floatIds[3 + usedSlots] = logGetVarId("stabilizer", "thrust");
-        if (checkLogIds(&floatIds[usedSlots], 4))
-          {
-            usedSlots += 4;
-            DEBUG_PRINT("* Stabilizer\n");
-        }
-        else
-          usdLogConfig.items &= ~USDLOG_STABILIZER;
-    }
-    if (usdLogConfig.items & USDLOG_CONTROL)
-      {
-        floatIds[0 + usedSlots] = logGetVarId("ctrltarget", "roll");
-        floatIds[1 + usedSlots] = logGetVarId("ctrltarget", "pitch");
-        floatIds[2 + usedSlots] = logGetVarId("ctrltarget", "yaw");
-        if (checkLogIds(&floatIds[usedSlots], 3))
-          {
-            usedSlots += 3;
-            DEBUG_PRINT("* Control\n");
-        }
-        else
-          usdLogConfig.items &= ~USDLOG_CONTROL;
-    }
-    /* replace number of slots by the calculated one,
-     * ('cause it was purged of unavailable log items) */
-    usdLogConfig.floatSlots = usedSlots;
-    usedSlots = 0;
-    if (usdLogConfig.items & USDLOG_RANGE)
-      {
-        intIds[0] = logGetVarId("range", "zrange");
-        if (checkLogIds(&intIds[usedSlots], 1))
-          {
-            usedSlots += 1;
-            DEBUG_PRINT("* Z-Range\n");
-        }
-        else
-          usdLogConfig.items &= ~USDLOG_RANGE;
-    }
-    usdLogConfig.intSlots = usedSlots;
+  TickType_t lastWakeTime = xTaskGetTickCount();
+
+  DEBUG_PRINT("wait for sensors\n");
+
+  /* wait until sensor calibration is done
+   * (memory of bias calculation buffer is free again) */
+  while(!sensorsAreCalibrated())
+    vTaskDelayUntil(&lastWakeTime, F2T(10));
+
+  // int floatIds[usdLogConfig.floatSlots];
+  // int intIds[usdLogConfig.intSlots];
+  usdLogConfig.floatVarIds = 0;
+  usdLogConfig.intVarIds = 0;
+  if (usdLogConfig.floatSlots) {
+    usdLogConfig.floatVarIds = pvPortMalloc(usdLogConfig.floatSlots * sizeof(int));
+  }
+  if (usdLogConfig.intSlots) {
+    usdLogConfig.intVarIds = pvPortMalloc(usdLogConfig.intSlots * sizeof(int));
   }
 
-  TickType_t lastWakeTime = xTaskGetTickCount();
+  DEBUG_PRINT("Free heap: %d bytes\n", xPortGetFreeHeapSize());
+
+  // store logging variable ids
+  {
+    int floatIdx = 0;
+    int intIdx = 0;
+
+    while (f_open(&logFile, "config.txt", FA_READ) == FR_OK) {
+      /* try to read configuration */
+      char readBuffer[32];
+      TCHAR* line = f_gets(readBuffer, sizeof(readBuffer), &logFile);
+      if (!line) break;
+      line = f_gets(readBuffer, sizeof(readBuffer), &logFile);
+      if (!line) break;
+      line = f_gets(readBuffer, sizeof(readBuffer), &logFile);
+      if (!line) break;
+
+      while (line) {
+        line = f_gets(readBuffer, sizeof(readBuffer), &logFile);
+        if (!line) break;
+        char* group = line;
+        char* name = 0;
+        for (int i = 0; i < strlen(line); ++i) {
+          if (line[i] == '.') {
+            line[i] = 0;
+            name = &line[i+1];
+            i = strlen(name);
+            if (name[i-1] == '\n') {
+              name[i-1] = 0; // remove newline at the end
+            }
+            break;
+          }
+        }
+        int varid = logGetVarId(group, name);
+        if (varid == -1) {
+          continue;
+        }
+
+        if (logGetType(varid) == LOG_FLOAT) {
+          usdLogConfig.floatVarIds[floatIdx++] = varid;
+        } else {
+          usdLogConfig.intVarIds[intIdx++] = varid;
+        }
+      }
+      break;
+    }
+    f_close(&logFile);
+  }
+
   int i;
 
   /* struct definition for buffering data to write
@@ -409,11 +410,6 @@ static void usdLogTask(void* prm)
     float floats[usdLogConfig.floatSlots];
     int ints[usdLogConfig.intSlots];
   };
-
-  /* wait until sensor calibration is done
-   * (memory of bias calculation buffer is free again) */
-  while(!sensorsAreCalibrated())
-    vTaskDelayUntil(&lastWakeTime, F2T(10));
 
   /* allocate memory for buffer */
   DEBUG_PRINT("malloc buffer ...\n");
@@ -451,13 +447,11 @@ static void usdLogTask(void* prm)
 
       /* write data into buffer */
       usdLogBuffer->tick = lastWakeTime;
-      for (i = usdLogConfig.floatSlots-1; i >= 0; i--)
-        {
-          usdLogBuffer->floats[i] = logGetFloat(floatIds[i]);
+      for (i = usdLogConfig.floatSlots-1; i >= 0; i--) {
+          usdLogBuffer->floats[i] = logGetFloat(usdLogConfig.floatVarIds[i]);
       }
-      for (i = usdLogConfig.intSlots-1; i >= 0; i--)
-        {
-          usdLogBuffer->ints[i] = logGetInt(intIds[i]);
+      for (i = usdLogConfig.intSlots-1; i >= 0; i--) {
+          usdLogBuffer->ints[i] = logGetInt(usdLogConfig.intVarIds[i]);
       }
       /* set pointer on latest data and queue */
       usdLogQueuePtr.tick = &usdLogBuffer->tick;
@@ -516,50 +510,34 @@ static void usdWriteTask(void* usdLogQueue)
         f_write(&logFile, &logWidth, 1, &bytesWritten);
         crcValue = crcByByte(&logWidth, 1, INITIAL_REMAINDER, 0, crcTable);
       }
-      USD_WRITE(&logFile, (uint8_t*)"Itick", 5, &bytesWritten,
+      USD_WRITE(&logFile, (uint8_t*)"tick(I),", 8, &bytesWritten,
                 crcValue, 0, crcTable)
 
-      if (usdLogConfig.items & USDLOG_ACC)
-        {
-          USD_WRITE(&logFile, (uint8_t*)"faccxfaccyfaccz", 15, &bytesWritten,
-                    crcValue, 0, crcTable)
-#ifdef LOG_SEC_IMU
-          USD_WRITE(&logFile, (uint8_t*)"fac2xfac2yfac2z", 15, &bytesWritten,
-                    crcValue, 0, crcTable)
-#endif
-      }
-
-      if (usdLogConfig.items & USDLOG_GYRO) {
-          USD_WRITE(&logFile, (uint8_t*)"fgyrxfgyryfgyrz", 15, &bytesWritten,
-                    crcValue, 0, crcTable)
-#ifdef LOG_SEC_IMU
-          USD_WRITE(&logFile, (uint8_t*)"fgy2xfgy2yfgy2z", 15, &bytesWritten,
-                    crcValue, 0, crcTable)
-#endif
-      }
-
-      if (usdLogConfig.items & USDLOG_BARO) {
-          USD_WRITE(&logFile, (uint8_t*)"f aslftempfpres", 15, &bytesWritten,
+      for (int i = 0; i < usdLogConfig.floatSlots; ++i) {
+        char* group;
+        char* name;
+        logGetGroupAndName(usdLogConfig.floatVarIds[i], &group, &name);
+        USD_WRITE(&logFile, (uint8_t*)group, strlen(group), &bytesWritten,
+          crcValue, 0, crcTable)
+        USD_WRITE(&logFile, (uint8_t*)".", 1, &bytesWritten,
+          crcValue, 0, crcTable)
+        USD_WRITE(&logFile, (uint8_t*)name, strlen(name), &bytesWritten,
+          crcValue, 0, crcTable)
+        USD_WRITE(&logFile, (uint8_t*)"(f),", 4, &bytesWritten,
                     crcValue, 0, crcTable)
       }
 
-      if (usdLogConfig.items & USDLOG_MAG) {
-          USD_WRITE(&logFile, (uint8_t*)"fmagxfmagyfmagz", 15, &bytesWritten,
-                    crcValue, 0, crcTable)
-      }
-
-      if (usdLogConfig.items & USDLOG_STABILIZER) {
-          USD_WRITE(&logFile, (uint8_t*)"fsrolfspitfsyawfsthr", 20,
-                    &bytesWritten, crcValue, 0, crcTable)
-      }
-
-      if (usdLogConfig.items & USDLOG_CONTROL) {
-          USD_WRITE(&logFile, (uint8_t*)"fcrolfcpitfcyaw", 15, &bytesWritten,
-                    crcValue, 0, crcTable)
-      }
-
-      if (usdLogConfig.items & USDLOG_RANGE) {
-          USD_WRITE(&logFile, (uint8_t*)"irang", 5, &bytesWritten,
+      for (int i = 0; i < usdLogConfig.intSlots; ++i) {
+        char* group;
+        char* name;
+        logGetGroupAndName(usdLogConfig.intVarIds[i], &group, &name);
+        USD_WRITE(&logFile, (uint8_t*)group, strlen(group), &bytesWritten,
+          crcValue, 0, crcTable)
+        USD_WRITE(&logFile, (uint8_t*)".", 1, &bytesWritten,
+          crcValue, 0, crcTable)
+        USD_WRITE(&logFile, (uint8_t*)name, strlen(name), &bytesWritten,
+          crcValue, 0, crcTable)
+        USD_WRITE(&logFile, (uint8_t*)"(I),", 4, &bytesWritten,
                     crcValue, 0, crcTable)
       }
 
@@ -568,8 +546,8 @@ static void usdWriteTask(void* usdLogQueue)
       f_write(&logFile, &crcValue, 4, &bytesWritten);
       f_close(&logFile);
 
-      uint8_t floatBytes = usdLogConfig.floatSlots * 4;
-      uint8_t intBytes = usdLogConfig.intSlots * 4;
+      int floatBytes = usdLogConfig.floatSlots * 4;
+      int intBytes = usdLogConfig.intSlots * 4;
       usdLogQueuePtr_t usdLogQueuePtr;
 
       while (1) {
@@ -589,13 +567,15 @@ static void usdWriteTask(void* usdLogQueue)
               /* write binary data and point on next item */
               USD_WRITE(&logFile, (uint8_t*)usdLogQueuePtr.tick, 4,
                         &bytesWritten, crcValue, 0, crcTable)
-              if (usdLogConfig.floatSlots)
+              if (usdLogConfig.floatSlots) {
                 USD_WRITE(&logFile, (uint8_t*)usdLogQueuePtr.floats,
                           floatBytes, &bytesWritten, crcValue, 0, crcTable)
-                          if (usdLogConfig.intSlots)
-                            USD_WRITE(&logFile, (uint8_t*)usdLogQueuePtr.ints,
-                                      intBytes, &bytesWritten,
-                                      crcValue, 0, crcTable)
+              }
+              if (usdLogConfig.intSlots) {
+                USD_WRITE(&logFile, (uint8_t*)usdLogQueuePtr.ints,
+                          intBytes, &bytesWritten,
+                          crcValue, 0, crcTable)
+              }
           } while(--setsToWrite);
           /* final xor and negate crc value */
           crcValue = ~(crcValue^FINAL_XOR_VALUE);

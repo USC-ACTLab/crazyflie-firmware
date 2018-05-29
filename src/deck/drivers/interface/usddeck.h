@@ -25,6 +25,8 @@ typedef struct usdLogConfig_s {
   uint8_t bufferSize;
   uint8_t floatSlots;
   uint8_t intSlots;
+  int* floatVarIds; // dynamically allocated
+  int* intVarIds;   // dynamically allocated
 } usdLogConfig_t;
 
 #define USD_WRITE(FILE, MESSAGE, BYTES, BYTES_WRITTEN, CRC_VALUE, CRC_FINALXOR, CRC_TABLE) \
