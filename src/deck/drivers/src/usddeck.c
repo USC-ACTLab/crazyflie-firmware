@@ -195,137 +195,88 @@ static bool isInit = false;
 static void usdInit(DeckInfo *info)
 {
   if (!isInit) {
-      /* create driver structure */
-      FATFS_AddDriver(&fatDrv, 0);
-      vTaskDelay(M2T(100));
-      /* try to mount drives before creating the tasks */
-      if (f_mount(&FatFs, "", 1) == FR_OK)
-        {
-          DEBUG_PRINT("mount SD-Card [OK].\n");
-          /* try to open config file */
-          bool success = false;
-          while (f_open(&logFile, "config.txt", FA_READ) == FR_OK)
-            {
-              /* try to read configuration */
-              char readBuffer[32];
-              char* endptr;
-              TCHAR* line = f_gets(readBuffer, sizeof(readBuffer), &logFile);
-              if (!line) break;
-              usdLogConfig.frequency = strtol(line, &endptr, 10);
-              // strtol(line, &usdLogConfig.frequency, 10);
-              line = f_gets(readBuffer, sizeof(readBuffer), &logFile);
-              if (!line) break;
-              usdLogConfig.bufferSize = strtol(line, &endptr, 10);
-              // strtol(line, &usdLogConfig.bufferSize, 10);
-              line = f_gets(usdLogConfig.filename, sizeof(usdLogConfig.filename), &logFile);
-              if (!line) break;
+    /* create driver structure */
+    FATFS_AddDriver(&fatDrv, 0);
+    vTaskDelay(M2T(100));
+    /* try to mount drives before creating the tasks */
+    if (f_mount(&FatFs, "", 1) == FR_OK) {
+      DEBUG_PRINT("mount SD-Card [OK].\n");
+      /* try to open config file */
+      bool success = false;
+      while (f_open(&logFile, "config.txt", FA_READ) == FR_OK) {
+        /* try to read configuration */
+        char readBuffer[32];
+        char* endptr;
+        TCHAR* line = f_gets(readBuffer, sizeof(readBuffer), &logFile);
+        if (!line) break;
+        usdLogConfig.frequency = strtol(line, &endptr, 10);
+        // strtol(line, &usdLogConfig.frequency, 10);
+        line = f_gets(readBuffer, sizeof(readBuffer), &logFile);
+        if (!line) break;
+        usdLogConfig.bufferSize = strtol(line, &endptr, 10);
+        // strtol(line, &usdLogConfig.bufferSize, 10);
+        line = f_gets(usdLogConfig.filename, sizeof(usdLogConfig.filename), &logFile);
+        if (!line) break;
 
-              int l = strlen(usdLogConfig.filename);
-              if (l > sizeof(usdLogConfig.filename) - 2) {
-                l = sizeof(usdLogConfig.filename) - 2;
-              }
-              usdLogConfig.filename[l-1] = '0';
-              usdLogConfig.filename[l] = '0';
-              usdLogConfig.filename[l+1] = 0;
-
-              usdLogConfig.floatSlots = 0;
-              usdLogConfig.intSlots = 0;
-              while (line) {
-                line = f_gets(readBuffer, sizeof(readBuffer), &logFile);
-                if (!line) break;
-                char* group = line;
-                char* name = 0;
-                for (int i = 0; i < strlen(line); ++i) {
-                  if (line[i] == '.') {
-                    line[i] = 0;
-                    name = &line[i+1];
-                    i = strlen(name);
-                    if (name[i-1] == '\n') {
-                      name[i-1] = 0; // remove newline at the end
-                    }
-                    break;
-                  }
-                }
-                int varid = logGetVarId(group, name);
-                if (varid == -1) {
-                  DEBUG_PRINT("Unknown log variable %s.%s.\n", group, name);
-                  continue;
-                }
-
-                if (logGetType(varid) == LOG_FLOAT) {
-                  ++usdLogConfig.floatSlots;
-                } else {
-                  ++usdLogConfig.intSlots;
-                }
-              }
-
-
-              ///
-#if 0
-
-
-              char readBuffer[5];
-              unsigned int bytesRead;
-              if (f_read(&logFile, readBuffer, 4, &bytesRead) == FR_OK)
-                {
-                  /* assign bytes to config struct */
-                  usdLogConfig.items = readBuffer[0];
-                  usdLogConfig.frequency = readBuffer[1]<<8 | readBuffer[2];
-                  usdLogConfig.bufferSize = readBuffer[3];
-                  if ( (f_read(&logFile, usdLogConfig.filename, 10, &bytesRead)
-                      != FR_OK) && ~bytesRead )
-                    {
-                      bytesRead = 12;
-                      while(bytesRead--)
-                        usdLogConfig.filename[bytesRead] = '0';
-                      usdLogConfig.filename[12] = '\0';
-                    }
-                  else {
-                      usdLogConfig.filename[bytesRead + 0] = '0';
-                      usdLogConfig.filename[bytesRead + 1] = '0';
-                      usdLogConfig.filename[bytesRead + 2] = '\0';
-                  }
-#endif
-                  f_close(&logFile);
-#if 0
-                  usdLogConfig.floatSlots =
-                      ((usdLogConfig.items & USDLOG_ACC) ? 3 : 0)
-#ifdef LOG_SEC_IMU
-                      + ((usdLogConfig.items & USDLOG_ACC) ? 3 : 0)
-#endif
-                      + ((usdLogConfig.items & USDLOG_GYRO) ? 3 : 0)
-#ifdef LOG_SEC_IMU
-                      + ((usdLogConfig.items & USDLOG_GYRO) ? 3 : 0)
-#endif
-                      + ((usdLogConfig.items & USDLOG_BARO) ? 3 : 0)
-                      + ((usdLogConfig.items & USDLOG_MAG) ? 3 : 0)
-                      + ((usdLogConfig.items & USDLOG_STABILIZER) ? 4 : 0)
-                      + ((usdLogConfig.items & USDLOG_CONTROL) ? 3 : 0);
-
-                  usdLogConfig.intSlots =
-                      ((usdLogConfig.items & USDLOG_RANGE) ? 1 : 0);
-#endif
-                  DEBUG_PRINT("Config read [OK].\n");
-                  DEBUG_PRINT("Frequency: %dHz. Buffer size: %d\n",
-                              usdLogConfig.frequency, usdLogConfig.bufferSize);
-                  DEBUG_PRINT("Filename: %s.\n", usdLogConfig.filename);
-                  DEBUG_PRINT("slots: %d, %d.\n", usdLogConfig.floatSlots, usdLogConfig.intSlots);
-
-                  /* create usd-log task */
-                  xTaskCreate(usdLogTask, USDLOG_TASK_NAME,
-                              USDLOG_TASK_STACKSIZE, NULL,
-                              USDLOG_TASK_PRI, NULL);
-
-                  success = true;
-                  break;
-                }
-            
-            if (!success) {
-                DEBUG_PRINT("Config read [FAIL].\n");
-            }
+        int l = strlen(usdLogConfig.filename);
+        if (l > sizeof(usdLogConfig.filename) - 2) {
+          l = sizeof(usdLogConfig.filename) - 2;
         }
-      else
-        DEBUG_PRINT("mount SD-Card [FAIL].\n");
+        usdLogConfig.filename[l-1] = '0';
+        usdLogConfig.filename[l] = '0';
+        usdLogConfig.filename[l+1] = 0;
+
+        usdLogConfig.numSlots = 0;
+        usdLogConfig.numBytes = 0;
+        while (line) {
+          line = f_gets(readBuffer, sizeof(readBuffer), &logFile);
+          if (!line) break;
+          char* group = line;
+          char* name = 0;
+          for (int i = 0; i < strlen(line); ++i) {
+            if (line[i] == '.') {
+              line[i] = 0;
+              name = &line[i+1];
+              i = strlen(name);
+              if (name[i-1] == '\n') {
+                name[i-1] = 0; // remove newline at the end
+              }
+              break;
+            }
+          }
+          int varid = logGetVarId(group, name);
+          if (varid == -1) {
+            DEBUG_PRINT("Unknown log variable %s.%s.\n", group, name);
+            continue;
+          }
+
+          ++usdLogConfig.numSlots;
+          usdLogConfig.numBytes += logVarSize(logGetType(varid));
+        }
+        f_close(&logFile);
+
+        DEBUG_PRINT("Config read [OK].\n");
+        DEBUG_PRINT("Frequency: %dHz. Buffer size: %d\n",
+                    usdLogConfig.frequency, usdLogConfig.bufferSize);
+        DEBUG_PRINT("Filename: %s.\n", usdLogConfig.filename);
+        DEBUG_PRINT("slots: %d, %d.\n", usdLogConfig.numSlots, usdLogConfig.numBytes);
+
+        /* create usd-log task */
+        xTaskCreate(usdLogTask, USDLOG_TASK_NAME,
+                    USDLOG_TASK_STACKSIZE, NULL,
+                    USDLOG_TASK_PRI, NULL);
+
+        success = true;
+        break;
+      }
+      
+      if (!success) {
+          DEBUG_PRINT("Config read [FAIL].\n");
+      }
+    }
+    else {
+      DEBUG_PRINT("mount SD-Card [FAIL].\n");
+    }
   }
   isInit = true;
 }
@@ -338,26 +289,16 @@ static void usdLogTask(void* prm)
 
   /* wait until sensor calibration is done
    * (memory of bias calculation buffer is free again) */
-  while(!sensorsAreCalibrated())
+  while(!sensorsAreCalibrated()) {
     vTaskDelayUntil(&lastWakeTime, F2T(10));
-
-  // int floatIds[usdLogConfig.floatSlots];
-  // int intIds[usdLogConfig.intSlots];
-  usdLogConfig.floatVarIds = 0;
-  usdLogConfig.intVarIds = 0;
-  if (usdLogConfig.floatSlots) {
-    usdLogConfig.floatVarIds = pvPortMalloc(usdLogConfig.floatSlots * sizeof(int));
-  }
-  if (usdLogConfig.intSlots) {
-    usdLogConfig.intVarIds = pvPortMalloc(usdLogConfig.intSlots * sizeof(int));
   }
 
+  usdLogConfig.varIds = pvPortMalloc(usdLogConfig.numSlots * sizeof(int*));
   DEBUG_PRINT("Free heap: %d bytes\n", xPortGetFreeHeapSize());
 
   // store logging variable ids
   {
-    int floatIdx = 0;
-    int intIdx = 0;
+    uint32_t idx = 0;
 
     while (f_open(&logFile, "config.txt", FA_READ) == FR_OK) {
       /* try to read configuration */
@@ -390,25 +331,18 @@ static void usdLogTask(void* prm)
           continue;
         }
 
-        if (logGetType(varid) == LOG_FLOAT) {
-          usdLogConfig.floatVarIds[floatIdx++] = varid;
-        } else {
-          usdLogConfig.intVarIds[intIdx++] = varid;
-        }
+        usdLogConfig.varIds[idx++] = varid;
       }
       break;
     }
     f_close(&logFile);
   }
 
-  int i;
-
   /* struct definition for buffering data to write
    * requires up to 100 elements for 1kHz logging */
   struct usdLogStruct {
     uint32_t tick;
-    float floats[usdLogConfig.floatSlots];
-    int ints[usdLogConfig.intSlots];
+    uint8_t data[usdLogConfig.numBytes];
   };
 
   /* allocate memory for buffer */
@@ -430,37 +364,63 @@ static void usdLogTask(void* prm)
               USDWRITE_TASK_STACKSIZE, usdLogQueue,
               USDWRITE_TASK_PRI, &xHandleWriteTask);
 
-  /*  */
   usdLogQueuePtr_t usdLogQueuePtr;
   uint8_t queueMessagesWaiting = 0;
 
   while(1) {
-      vTaskDelayUntil(&lastWakeTime, F2T(usdLogConfig.frequency));
-      queueMessagesWaiting = (uint8_t)uxQueueMessagesWaiting(usdLogQueue);
-      /* trigger writing once there exists at least one queue item,
-       * frequency will result itself */
-      if (queueMessagesWaiting)
-        vTaskResume(xHandleWriteTask);
-      /* skip if queue is full, one slot will be spared as mutex */
-      if (queueMessagesWaiting == (usdLogConfig.bufferSize - 1))
-        continue;
+    vTaskDelayUntil(&lastWakeTime, F2T(usdLogConfig.frequency));
+    queueMessagesWaiting = (uint8_t)uxQueueMessagesWaiting(usdLogQueue);
+    /* trigger writing once there exists at least one queue item,
+     * frequency will result itself */
+    if (queueMessagesWaiting) {
+      vTaskResume(xHandleWriteTask);
+    }
+    /* skip if queue is full, one slot will be spared as mutex */
+    if (queueMessagesWaiting == (usdLogConfig.bufferSize - 1)) {
+      continue;
+    }
 
-      /* write data into buffer */
-      usdLogBuffer->tick = lastWakeTime;
-      for (i = usdLogConfig.floatSlots-1; i >= 0; i--) {
-          usdLogBuffer->floats[i] = logGetFloat(usdLogConfig.floatVarIds[i]);
+    /* write data into buffer */
+    usdLogBuffer->tick = lastWakeTime;
+    int offset = 0;
+    for (int i = 0; i < usdLogConfig.numSlots; ++i) {
+      int varid = usdLogConfig.varIds[i];
+      switch (logGetType(varid)) {
+        case LOG_UINT8:
+        case LOG_INT8:
+        {
+          memcpy(&usdLogBuffer->data[offset], logGetAddress(varid), sizeof(uint8_t));
+          offset += sizeof(uint8_t);
+          break;
+        }
+        case LOG_UINT16:
+        case LOG_INT16:
+        {
+          memcpy(&usdLogBuffer->data[offset], logGetAddress(varid), sizeof(uint16_t));
+          offset += sizeof(uint16_t);
+          break;
+        }
+        case LOG_UINT32:
+        case LOG_INT32:
+        case LOG_FLOAT:
+        {
+          memcpy(&usdLogBuffer->data[offset], logGetAddress(varid), sizeof(uint32_t));
+          offset += sizeof(uint32_t);
+          break;
+        }
+        default:
+          ASSERT(false);
       }
-      for (i = usdLogConfig.intSlots-1; i >= 0; i--) {
-          usdLogBuffer->ints[i] = logGetInt(usdLogConfig.intVarIds[i]);
-      }
-      /* set pointer on latest data and queue */
-      usdLogQueuePtr.tick = &usdLogBuffer->tick;
-      usdLogQueuePtr.floats = usdLogBuffer->floats;
-      usdLogQueuePtr.ints = usdLogBuffer->ints;
-      xQueueSend(usdLogQueue, &usdLogQueuePtr, 0);
-      /* set pointer to next buffer item */
-      if (++usdLogBuffer >= usdLogBufferStart+usdLogConfig.bufferSize)
-        usdLogBuffer = usdLogBufferStart;
+    }
+
+    /* set pointer on latest data and queue */
+    usdLogQueuePtr.tick = &usdLogBuffer->tick;
+    usdLogQueuePtr.data = usdLogBuffer->data;
+    xQueueSend(usdLogQueue, &usdLogQueuePtr, 0);
+    /* set pointer to next buffer item */
+    if (++usdLogBuffer >= usdLogBufferStart+usdLogConfig.bufferSize) {
+      usdLogBuffer = usdLogBufferStart;
+    }
   }
 }
 
@@ -485,59 +445,77 @@ static void usdWriteTask(void* usdLogQueue)
   {
     FILINFO fno;
     uint8_t NUL = 0;
-    while(usdLogConfig.filename[NUL] != '\0')
+    while(usdLogConfig.filename[NUL] != '\0') {
       NUL++;
-    while (f_stat(usdLogConfig.filename, &fno) == FR_OK)
-      {
-        /* increase file */
-        switch(usdLogConfig.filename[NUL-1]) {
-          case '9':
-            usdLogConfig.filename[NUL-1] = '0';
-            usdLogConfig.filename[NUL-2]++;
-            break;
-          default:
-            usdLogConfig.filename[NUL-1]++;
-        }
+    }
+    while (f_stat(usdLogConfig.filename, &fno) == FR_OK) {
+      /* increase file */
+      switch(usdLogConfig.filename[NUL-1]) {
+        case '9':
+          usdLogConfig.filename[NUL-1] = '0';
+          usdLogConfig.filename[NUL-2]++;
+          break;
+        default:
+          usdLogConfig.filename[NUL-1]++;
+      }
     }
   }
+
   /* try to create file */
   if (f_open(&logFile, usdLogConfig.filename, FA_CREATE_ALWAYS | FA_WRITE)
       == FR_OK)
     {
       /* write dataset header */
       {
-        uint8_t logWidth = 1 + usdLogConfig.floatSlots + usdLogConfig.intSlots;
+        uint8_t logWidth = 1 + usdLogConfig.numSlots;
         f_write(&logFile, &logWidth, 1, &bytesWritten);
         crcValue = crcByByte(&logWidth, 1, INITIAL_REMAINDER, 0, crcTable);
       }
       USD_WRITE(&logFile, (uint8_t*)"tick(I),", 8, &bytesWritten,
                 crcValue, 0, crcTable)
 
-      for (int i = 0; i < usdLogConfig.floatSlots; ++i) {
+      for (int i = 0; i < usdLogConfig.numSlots; ++i) {
         char* group;
         char* name;
-        logGetGroupAndName(usdLogConfig.floatVarIds[i], &group, &name);
+        int varid = usdLogConfig.varIds[i];
+        logGetGroupAndName(varid, &group, &name);
         USD_WRITE(&logFile, (uint8_t*)group, strlen(group), &bytesWritten,
           crcValue, 0, crcTable)
         USD_WRITE(&logFile, (uint8_t*)".", 1, &bytesWritten,
           crcValue, 0, crcTable)
         USD_WRITE(&logFile, (uint8_t*)name, strlen(name), &bytesWritten,
           crcValue, 0, crcTable)
-        USD_WRITE(&logFile, (uint8_t*)"(f),", 4, &bytesWritten,
+        USD_WRITE(&logFile, (uint8_t*)"(", 1, &bytesWritten,
                     crcValue, 0, crcTable)
-      }
-
-      for (int i = 0; i < usdLogConfig.intSlots; ++i) {
-        char* group;
-        char* name;
-        logGetGroupAndName(usdLogConfig.intVarIds[i], &group, &name);
-        USD_WRITE(&logFile, (uint8_t*)group, strlen(group), &bytesWritten,
-          crcValue, 0, crcTable)
-        USD_WRITE(&logFile, (uint8_t*)".", 1, &bytesWritten,
-          crcValue, 0, crcTable)
-        USD_WRITE(&logFile, (uint8_t*)name, strlen(name), &bytesWritten,
-          crcValue, 0, crcTable)
-        USD_WRITE(&logFile, (uint8_t*)"(I),", 4, &bytesWritten,
+        char typeChar;
+        switch (logGetType(varid)) {
+          case LOG_UINT8:
+            typeChar = 'B';
+            break;
+          case LOG_INT8:
+            typeChar = 'b';
+            break;
+          case LOG_UINT16:
+            typeChar = 'H';
+            break;
+          case LOG_INT16:
+            typeChar = 'h';
+            break;
+          case LOG_UINT32:
+            typeChar = 'I';
+            break;
+          case LOG_INT32:
+            typeChar = 'i';
+            break;
+          case LOG_FLOAT:
+            typeChar = 'f';
+            break;
+          default:
+            ASSERT(false);
+        }
+        USD_WRITE(&logFile, (uint8_t*)&typeChar, 1, &bytesWritten,
+                    crcValue, 0, crcTable)
+        USD_WRITE(&logFile, (uint8_t*)"),", 2, &bytesWritten,
                     crcValue, 0, crcTable)
       }
 
@@ -546,68 +524,58 @@ static void usdWriteTask(void* usdLogQueue)
       f_write(&logFile, &crcValue, 4, &bytesWritten);
       f_close(&logFile);
 
-      int floatBytes = usdLogConfig.floatSlots * 4;
-      int intBytes = usdLogConfig.intSlots * 4;
       usdLogQueuePtr_t usdLogQueuePtr;
 
       while (1) {
-          /* sleep */
-          vTaskSuspend(NULL);
-          /* determine how many sets can be written */
-          setsToWrite = (uint8_t)uxQueueMessagesWaiting(usdLogQueue);
-          /* try to open file in append mode */
-          if (f_open(&logFile, usdLogConfig.filename, FA_OPEN_APPEND | FA_WRITE)
-              != FR_OK)
-            continue;
-          f_write(&logFile, &setsToWrite, 1, &bytesWritten);
-          crcValue = crcByByte(&setsToWrite, 1, INITIAL_REMAINDER, 0, crcTable);
-          do {
-              /* receive data pointer from queue */
-              xQueueReceive(usdLogQueue, &usdLogQueuePtr, 0);
-              /* write binary data and point on next item */
-              USD_WRITE(&logFile, (uint8_t*)usdLogQueuePtr.tick, 4,
-                        &bytesWritten, crcValue, 0, crcTable)
-              if (usdLogConfig.floatSlots) {
-                USD_WRITE(&logFile, (uint8_t*)usdLogQueuePtr.floats,
-                          floatBytes, &bytesWritten, crcValue, 0, crcTable)
-              }
-              if (usdLogConfig.intSlots) {
-                USD_WRITE(&logFile, (uint8_t*)usdLogQueuePtr.ints,
-                          intBytes, &bytesWritten,
-                          crcValue, 0, crcTable)
-              }
-          } while(--setsToWrite);
-          /* final xor and negate crc value */
-          crcValue = ~(crcValue^FINAL_XOR_VALUE);
-          f_write(&logFile, &crcValue, 4, &bytesWritten);
-          /* close file */
-          f_close(&logFile);
+        /* sleep */
+        vTaskSuspend(NULL);
+        /* determine how many sets can be written */
+        setsToWrite = (uint8_t)uxQueueMessagesWaiting(usdLogQueue);
+        /* try to open file in append mode */
+        if (f_open(&logFile, usdLogConfig.filename, FA_OPEN_APPEND | FA_WRITE)
+            != FR_OK)
+          continue;
+        f_write(&logFile, &setsToWrite, 1, &bytesWritten);
+        crcValue = crcByByte(&setsToWrite, 1, INITIAL_REMAINDER, 0, crcTable);
+        do {
+          /* receive data pointer from queue */
+          xQueueReceive(usdLogQueue, &usdLogQueuePtr, 0);
+          /* write binary data and point on next item */
+          USD_WRITE(&logFile, (uint8_t*)usdLogQueuePtr.tick, 4,
+                    &bytesWritten, crcValue, 0, crcTable)
+          USD_WRITE(&logFile, (uint8_t*)usdLogQueuePtr.data,
+                    usdLogConfig.numBytes, &bytesWritten, crcValue, 0, crcTable)
+        } while(--setsToWrite);
+        /* final xor and negate crc value */
+        crcValue = ~(crcValue^FINAL_XOR_VALUE);
+        f_write(&logFile, &crcValue, 4, &bytesWritten);
+        /* close file */
+        f_close(&logFile);
       }
-  } else f_mount(NULL, "", 0);
+  } else {
+    f_mount(NULL, "", 0);
+  }
   /* something went wrong */
   vTaskDelete(NULL);
 }
 
 static bool usdTest()
 {
-  if (!isInit)
-    {
-      DEBUG_PRINT("Error while initializing uSD deck\n");
-    }
+  if (!isInit) {
+    DEBUG_PRINT("Error while initializing uSD deck\n");
+  }
 #ifdef USD_RUN_DISKIO_FUNCTION_TESTS
   int result;
   extern int test_diskio (BYTE pdrv, UINT ncyc, DWORD* buff, UINT sz_buff);
 
   result = test_diskio(0, 1, (DWORD*)&workBuff, sizeof(workBuff));
-  if (result)
-    {
-      DEBUG_PRINT("(result=%d)\nFatFs diskio functions test [FAIL].\n", result);
-      isInit = false;
-    }
-  else
-    {
-      DEBUG_PRINT("FatFs diskio functions test [OK].\n");
-    }
+  if (result) {
+    DEBUG_PRINT("(result=%d)\nFatFs diskio functions test [FAIL].\n", result);
+    isInit = false;
+  }
+  else {
+    DEBUG_PRINT("FatFs diskio functions test [OK].\n");
+  }
 #endif
 
   return isInit;

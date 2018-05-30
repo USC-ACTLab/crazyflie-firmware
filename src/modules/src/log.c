@@ -779,6 +779,11 @@ void logGetGroupAndName(int varid, char** group, char** name)
   }
 }
 
+void* logGetAddress(int varid)
+{
+  return logs[varid].address;
+}
+
 int logGetInt(int varid)
 {
   int valuei = 0;
@@ -823,7 +828,7 @@ float logGetFloat(int varid)
   return logGetInt(varid);
 }
 
-unsigned int logGetUint(int varid)
+uint8_t logVarSize(int type)
 {
-  return (unsigned int)logGetInt(varid);
+  return typeLength[type];
 }
