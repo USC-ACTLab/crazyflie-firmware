@@ -49,6 +49,8 @@
 #include "estimator.h"
 #include "crtp_commander_high_level.h"
 
+#include "usddeck.h"
+
 static bool isInit;
 static bool emergencyStop = false;
 static int emergencyStopTimeout = EMERGENCY_STOP_TIMEOUT_DISABLED;
@@ -207,6 +209,13 @@ static void stabilizerTask(void* param)
       } else {
         powerDistribution(&control);
     }
+	
+   if (   usddeckLoggingEnabled()
+        && usddeckLoggingMode() == usddeckLoggingMode_SynchronousStabilizer
+        && RATE_DO_EXECUTE(usddeckFrequency(), tick)) {
+      usddeckTriggerLogging();
+    }
+
 
     // stats
     if (!crtpCommanderHighLevelIsStopped()) {
