@@ -55,9 +55,9 @@ static const uint8_t header[] = {'E', 'X', 'T', 'C'};
 
 // TODO: this is hacky, but much more efficient than using the logging system...
 extern state_t state;
+extern setpoint_t setpoint;
 
 static uint8_t cmdbuffer[MAX_COMMAND_SIZE];
-static setpoint_t setpoint;
 
 enum EXTPCCOMMANDS
 {
@@ -112,7 +112,6 @@ static uint16_t recvUint16(crc* crcValue)
 
 void externalComputerSendTask(void *param)
 {
-  uint32_t iteration = 0;
   TickType_t lastWakeTime = xTaskGetTickCount();
   while (1) {
     vTaskDelayUntil(&lastWakeTime, F2T(SEND_RATE));
@@ -121,28 +120,44 @@ void externalComputerSendTask(void *param)
     // send(header, sizeof(header), &crcValue);
     uart1SendData(sizeof(header), (const uint8_t*)header);
 
-    uint16_t length = 4 + 3 * sizeof(float);//4*sizeof(float);
+    uint16_t length = 4 + 12 * sizeof(float);//4*sizeof(float);
     send((const uint8_t*)&length, sizeof(length), &crcValue);
 
-    // send((const uint8_t*)&lastWakeTime, sizeof(TickType_t), &crcValue);
-    send((const uint8_t*)&iteration, sizeof(uint32_t), &crcValue);
+    send((const uint8_t*)&lastWakeTime, sizeof(TickType_t), &crcValue);
+
     sendFloat(state.position.x, &crcValue);
     sendFloat(state.position.y, &crcValue);
     sendFloat(state.position.z, &crcValue);
-    // send((const uint8_t*)&state.position.y, sizeof(float), &crcValue);
-    // send((const uint8_t*)&state.position.z, sizeof(float), &crcValue);
+
+    sendFloat(state.velocity.x, &crcValue);
+    sendFloat(state.velocity.y, &crcValue);
+    sendFloat(state.velocity.z, &crcValue);
+
+    sendFloat(state.acc.x, &crcValue);
+    sendFloat(state.acc.y, &crcValue);
+    sendFloat(state.acc.z, &crcValue);
+
+    // sendFloat(state.attitudeQuaternion.x, &crcValue);
+    // sendFloat(state.attitudeQuaternion.y, &crcValue);
+    // sendFloat(state.attitudeQuaternion.z, &crcValue);
+    // sendFloat(state.attitudeQuaternion.w, &crcValue);
+
+    sendFloat(setpoint.position.x, &crcValue);
+    sendFloat(setpoint.position.y, &crcValue);
+    sendFloat(setpoint.position.z, &crcValue);
 
     /* negate crc value */
     crcValue = ~(crcValue^FINAL_XOR_VALUE);
     uart1SendData(sizeof(crcValue), (const uint8_t*)&crcValue);
 
-    ++iteration;
   }
 }
 
 void externalComputerReceiveTask(void *param)
 {
-  uint8_t ringbuffer[sizeof(header)];
+  static uint8_t ringbuffer[sizeof(header)];
+  static setpoint_t setpoint;
+
   uint8_t ringbufferIdx = 0;
 
   while (1) {

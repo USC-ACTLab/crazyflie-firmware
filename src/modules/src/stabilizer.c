@@ -49,7 +49,7 @@ static bool emergencyStop = false;
 static int emergencyStopTimeout = EMERGENCY_STOP_TIMEOUT_DISABLED;
 
 // State variables for the stabilizer
-static setpoint_t setpoint;
+/*static*/ setpoint_t setpoint;
 static sensorData_t sensorData;
 /*static*/ state_t state;
 static control_t control;
