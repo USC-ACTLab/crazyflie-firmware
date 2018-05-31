@@ -659,6 +659,28 @@ static const DeckDriver usd_deck = {
     .test = usdTest,
 };
 
+uint32_t usddeckLastLoggingFileSize(void)
+{
+  FILINFO info;
+  if (f_stat(usdLogConfig.filename, &info) == FR_OK) {
+    return info.fsize;
+  }
+  return 0;
+}
+
+uint32_t usddeckLastLoggingFileRead(uint8_t* data, uint32_t offset, uint32_t numBytes)
+{
+  uint32_t result = 0;
+  if (f_open(&logFile, usdLogConfig.filename, FA_READ) == FR_OK) {
+    if (f_lseek(&logFile, offset) == FR_OK) {
+      UINT r;
+      f_read(&logFile, data, numBytes, &r);
+      result = (uint32_t)r;
+    }
+  }
+  return result;
+}
+
 DECK_DRIVER(usd_deck);
 
 PARAM_GROUP_START(deck)

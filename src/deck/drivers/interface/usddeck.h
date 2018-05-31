@@ -23,4 +23,10 @@ int usddeckFrequency(void);
 // For synchronous logging: add a new log entry
 void usddeckTriggerLogging(void);
 
+// returns size of last logging file
+uint32_t usddeckLastLoggingFileSize(void);
+
+// read numBytes at offset into data
+uint32_t usddeckLastLoggingFileRead(uint8_t* data, uint32_t offset, uint32_t numBytes);
+
 #endif //__USDDECK_H__
