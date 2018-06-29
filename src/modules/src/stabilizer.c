@@ -554,6 +554,11 @@ LOG_ADD(LOG_FLOAT, az, &state.acc.z)
 LOG_ADD(LOG_FLOAT, roll, &state.attitude.roll)
 LOG_ADD(LOG_FLOAT, pitch, &state.attitude.pitch)
 LOG_ADD(LOG_FLOAT, yaw, &state.attitude.yaw)
+
+LOG_ADD(LOG_FLOAT, qx, &state.attitudeQuaternion.x)
+LOG_ADD(LOG_FLOAT, qy, &state.attitudeQuaternion.y)
+LOG_ADD(LOG_FLOAT, qz, &state.attitudeQuaternion.z)
+LOG_ADD(LOG_FLOAT, qw, &state.attitudeQuaternion.w)
 LOG_GROUP_STOP(stateEstimate)
 
 LOG_GROUP_START(latency)
