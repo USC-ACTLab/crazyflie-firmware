@@ -412,7 +412,7 @@ uwbAlgorithm_t uwbTdoa2TagAlgorithm = {
   .isRangingOk = isRangingOk,
 };
 
-
+#if 0
 LOG_GROUP_START(tdoa)
 LOG_ADD(LOG_FLOAT, d7-0, &logUwbTdoaDistDiff[0])
 LOG_ADD(LOG_FLOAT, d0-1, &logUwbTdoaDistDiff[1])
@@ -452,3 +452,4 @@ LOG_ADD(LOG_UINT32, a0RxTick, &stats.lastAnchor0RxTick)
 #endif
 
 LOG_GROUP_STOP(tdoa)
+#endif

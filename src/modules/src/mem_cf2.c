@@ -44,6 +44,7 @@
 #include "ledring12.h"
 #include "locodeck.h"
 #include "crtp_commander_high_level.h"
+#include "usddeck.h"
 
 #include "console.h"
 #include "assert.h"
@@ -67,7 +68,8 @@
 #define LEDMEM_ID       0x01
 #define LOCO_ID         0x02
 #define TRAJ_ID         0x03
-#define OW_FIRST_ID     0x04
+#define USDLOG_ID       0x04
+#define OW_FIRST_ID     0x05
 
 #define STATUS_OK 0
 
@@ -76,6 +78,7 @@
 #define MEM_TYPE_LED12  0x10
 #define MEM_TYPE_LOCO   0x11
 #define MEM_TYPE_TRAJ   0x12
+#define MEM_TYPE_USDLOG 0x13
 
 #define MEM_LOCO_INFO             0x0000
 #define MEM_LOCO_ANCHOR_BASE      0x1000
@@ -197,6 +200,12 @@ void createInfoResponse(CRTPPacket* p, uint8_t memId)
     case TRAJ_ID:
       createInfoResponseBody(p, MEM_TYPE_TRAJ, sizeof(trajectories_memory), noData);
       break;
+    case USDLOG_ID:
+      {
+        uint32_t size = usddeckLastLoggingFileSize();
+        createInfoResponseBody(p, MEM_TYPE_USDLOG, size, noData);
+      }
+      break;
     default:
       if (owGetinfo(memId - OW_FIRST_ID, &serialNbr))
       {
@@ -266,6 +275,13 @@ void memReadProcess()
         } else {
           status = EIO;
         }
+      }
+      break;
+
+    case MEM_TYPE_USDLOG:
+      {
+        uint32_t read = usddeckLastLoggingFileRead(&p.data[6], memAddr, readLen);
+        status = read == readLen ? STATUS_OK : EIO;
       }
       break;
 
@@ -394,6 +410,11 @@ void memWriteProcess()
           status = EIO;
         }
       }
+      break;
+
+    case MEM_TYPE_USDLOG:
+      // Not supported
+      status = EIO;
       break;
 
     default:

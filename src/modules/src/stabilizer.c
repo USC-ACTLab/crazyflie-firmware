@@ -45,6 +45,8 @@
 #include "estimator.h"
 #include "crtp_commander_high_level.h"
 
+#include "usddeck.h"
+
 static bool isInit;
 static bool emergencyStop = false;
 static int emergencyStopTimeout = EMERGENCY_STOP_TIMEOUT_DISABLED;
@@ -157,14 +159,14 @@ static void stabilizerTask(void* param)
 
     commanderGetSetpoint(&setpoint, &state);
 
-    sitAwUpdateSetpoint(&setpoint, &sensorData, &state);
+    //sitAwUpdateSetpoint(&setpoint, &sensorData, &state);
 
     controller(&control, &setpoint, &sensorData, &state, tick);
 
     checkEmergencyStopTimeout();
 
     // TODO: this should go into the sitAw framework
-    bool upsideDown = sensorData.acc.z < -0.5f;
+    bool upsideDown = false;//sensorData.acc.z < -0.5f;
 
     if (emergencyStop || upsideDown) {
       powerStop();
@@ -184,6 +186,12 @@ static void stabilizerTask(void* param)
         error_dist_last = error_dist;
         error_dist = 0;
       }
+   }
+
+    if (   usddeckLoggingEnabled()
+        && usddeckLoggingMode() == usddeckLoggingMode_SynchronousStabilizer
+        && RATE_DO_EXECUTE(usddeckFrequency(), tick)) {
+      usddeckTriggerLogging();
     }
 
     tick++;
@@ -260,11 +268,11 @@ LOG_GROUP_STOP(accSec)
 // LOG_ADD(LOG_FLOAT, pressure, &sensorData.baro.pressure)
 // LOG_GROUP_STOP(baro)
 
-// LOG_GROUP_START(gyro)
-// LOG_ADD(LOG_FLOAT, x, &sensorData.gyro.x)
-// LOG_ADD(LOG_FLOAT, y, &sensorData.gyro.y)
-// LOG_ADD(LOG_FLOAT, z, &sensorData.gyro.z)
-// LOG_GROUP_STOP(gyro)
+LOG_GROUP_START(gyro)
+LOG_ADD(LOG_FLOAT, x, &sensorData.gyro.x)
+LOG_ADD(LOG_FLOAT, y, &sensorData.gyro.y)
+LOG_ADD(LOG_FLOAT, z, &sensorData.gyro.z)
+LOG_GROUP_STOP(gyro)
 
 #ifdef LOG_SEC_IMU
 LOG_GROUP_START(gyroSec)
@@ -300,8 +308,20 @@ LOG_ADD(LOG_FLOAT, az, &state.acc.z)
 LOG_ADD(LOG_FLOAT, roll, &state.attitude.roll)
 LOG_ADD(LOG_FLOAT, pitch, &state.attitude.pitch)
 LOG_ADD(LOG_FLOAT, yaw, &state.attitude.yaw)
+
+LOG_ADD(LOG_FLOAT, qx, &state.attitudeQuaternion.x)
+LOG_ADD(LOG_FLOAT, qy, &state.attitudeQuaternion.y)
+LOG_ADD(LOG_FLOAT, qz, &state.attitudeQuaternion.z)
+LOG_ADD(LOG_FLOAT, qw, &state.attitudeQuaternion.w)
 LOG_GROUP_STOP(stateEstimate)
 
 LOG_GROUP_START(ctrlStat)
 LOG_ADD(LOG_FLOAT, edist, &error_dist_last)
 LOG_GROUP_STOP(ctrlStat)
+
+LOG_GROUP_START(control)
+LOG_ADD(LOG_INT16, roll, &control.roll)
+LOG_ADD(LOG_INT16, pitch, &control.pitch)
+LOG_ADD(LOG_INT16, yaw, &control.yaw)
+LOG_ADD(LOG_FLOAT, thrust, &control.thrust)
+LOG_GROUP_STOP(control)
