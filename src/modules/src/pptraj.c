@@ -221,8 +221,8 @@ float poly4d_max_accel_approx(struct poly4d const *p)
 	float amax = 0;
 	for (int i = 0; i < steps; ++i) {
 		struct vec ddx = polyval_xyz(acc, t);
-		float ddx_minkowski = vminkowski(ddx);
-		if (ddx_minkowski > amax) amax = ddx_minkowski;
+		float ddx_norm1 = vnorm1(ddx);
+		if (ddx_norm1 > amax) amax = ddx_norm1;
 		t += step;
 	}
 	return amax;

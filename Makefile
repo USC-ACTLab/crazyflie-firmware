@@ -88,6 +88,9 @@ VPATH_CF2 += vendor/libdw1000/src
 # vl53l1 driver
 VPATH_CF2 += $(LIB)/vl53l1/core/src
 
+# libquadrotor
+VPATH_CF2 += vendor/libquadrotor/src
+
 # FreeRTOS
 VPATH += $(PORT)
 PORT_OBJ = port.o
@@ -155,9 +158,10 @@ PROJ_OBJ += crtp_commander_generic.o crtp_localization_service.o
 PROJ_OBJ += attitude_pid_controller.o sensfusion6.o stabilizer.o
 PROJ_OBJ += position_estimator_altitude.o position_controller_pid.o
 PROJ_OBJ += estimator.o estimator_complementary.o
-PROJ_OBJ += controller.o controller_pid.o controller_mellinger.o
+PROJ_OBJ += controller.o controller_pid.o controller_mellinger.o controller_libquadrotor.o
 PROJ_OBJ += power_distribution_$(POWER_DISTRIBUTION).o
 PROJ_OBJ_CF2 += estimator_kalman.o
+PROJ_OBJ_CF2 += quad_control.o
 
 # High-Level Commander
 PROJ_OBJ += crtp_commander_high_level.o planner.o pptraj.o
@@ -236,6 +240,7 @@ INCLUDES  = -I$(FREERTOS)/include -I$(PORT) -Isrc
 INCLUDES += -Isrc/config -Isrc/hal/interface -Isrc/modules/interface
 INCLUDES += -Isrc/utils/interface -Isrc/drivers/interface -Isrc/platform
 INCLUDES += -Ivendor/CMSIS/CMSIS/Include -Isrc/drivers/bosch/interface
+INCLUDES += -Ivendor/libquadrotor/include -Ivendor/libquadrotor/include/cmath3d
 
 INCLUDES_CF2 += -I$(LIB)/STM32F4xx_StdPeriph_Driver/inc
 INCLUDES_CF2 += -I$(LIB)/CMSIS/STM32F4xx/Include

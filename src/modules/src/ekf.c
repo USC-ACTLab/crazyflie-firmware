@@ -108,7 +108,7 @@ void dynamic_matrix(struct quat const q, struct vec const omega, struct vec cons
 
 	eyeN(AS_1D(F), EKF_N);
 
-	//set_K_block33(F, 0, 3, eyescl(dt));
+	//set_K_block33(F, 0, 3, meyescl(dt));
 	F[0][3] = F[1][4] = F[2][5] = dt;
 
 	mult_K_block33(F, 0, 6, &Ca3, &A);
@@ -141,7 +141,7 @@ void addQ(double dt, struct quat q, struct vec ew, struct vec ea, float Q[EKF_N]
 
 	static float G[EKF_N][EKF_DISTURBANCE];
 	ZEROARR(G);
-	struct mat33 quat_by_gyro = eyescl(-1);
+	struct mat33 quat_by_gyro = meyescl(-1);
 	struct mat33 vel_by_acc = mneg(quat2rotmat(qinv(q)));
 	set_G_block33(G, 6, 0, &quat_by_gyro);
 	set_G_block33(G, 3, 3, &vel_by_acc);

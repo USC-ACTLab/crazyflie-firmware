@@ -10,3 +10,6 @@
 [submodule "vendor/CMSIS"]
 	path = vendor/CMSIS
 	url = https://github.com/ARM-software/CMSIS
+[submodule "vendor/libquadrotor"]
+	path = vendor/libquadrotor
+	url = https://github.com/jpreiss/libquadrotor

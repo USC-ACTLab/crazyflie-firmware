@@ -5,6 +5,7 @@
 #include "controller.h"
 #include "controller_pid.h"
 #include "controller_mellinger.h"
+#include "controller_libquadrotor.h"
 
 #define DEFAULT_CONTROLLER ControllerTypePID
 static ControllerType currentController = ControllerTypeAny;
@@ -21,6 +22,7 @@ static ControllerFcns controllerFunctions[] = {
   {.init = 0, .test = 0, .update = 0}, // Any
   {.init = controllerPidInit, .test = controllerPidTest, .update = controllerPid},
   {.init = controllerMellingerInit, .test = controllerMellingerTest, .update = controllerMellinger},
+  {.init = controllerLibQuadrotorInit, .test = controllerLibQuadrotorTest, .update = controllerLibQuadrotor},
 };
 
 
