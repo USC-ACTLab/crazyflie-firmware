@@ -202,7 +202,6 @@ void logInit(void)
     if(!(logs[i].type & LOG_GROUP))
       logsCount++;
   }
-  ASSERT(logsCount <= 255); // Current API does not support that many entries!
 
   //Manually free all log blocks
   for(i=0; i<LOG_MAX_BLOCKS; i++)
