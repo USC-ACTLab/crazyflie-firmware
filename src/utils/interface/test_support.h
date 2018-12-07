@@ -1,13 +1,13 @@
-/*
- *    ||          ____  _ __                           
- * +------+      / __ )(_) /_______________ _____  ___ 
+/**
+ *    ||          ____  _ __
+ * +------+      / __ )(_) /_______________ _____  ___
  * | 0xBC |     / __  / / __/ ___/ ___/ __ `/_  / / _ \
  * +------+    / /_/ / / /_/ /__/ /  / /_/ / / /_/  __/
  *  ||  ||    /_____/_/\__/\___/_/   \__,_/ /___/\___/
  *
  * Crazyflie control firmware
  *
- * Copyright (C) 2011-2012 Bitcraze AB
+ * Copyright (C) 2018 Bitcraze AB
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,24 +21,16 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  *
- * system.h - Top level module header file
+ * Utilities to simplify unit testing
+ *
  */
 
-#ifndef __SYSTEM_H__
-#define __SYSTEM_H__
+#pragma once
 
-#include <stdbool.h>
-#include <stdint.h>
+// UNIT_TEST_MODE is defined by the unit test framework when unit tests are running
 
-void systemInit(void);
-bool systemTest(void);
-
-void systemLaunch(void);
-
-
-void systemStart();
-void systemWaitStart(void);
-void systemSetCanFly(bool val);
-bool systemCanFly(void);
-
-#endif //__SYSTEM_H__
+#if UNIT_TEST_MODE
+  #define TESTABLE_STATIC
+#else
+  #define TESTABLE_STATIC static
+#endif

@@ -7,7 +7,7 @@
  *
  * Crazyflie control firmware
  *
- * Copyright (C) 2011-2018 Bitcraze AB
+ * Copyright (C) 2018 Bitcraze AB
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,15 +21,24 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  *
- * outlierFilter.h: Outlier rejection filter for the LPS system
  */
 
-#ifndef __OUTLIER_FILTER_H__
-#define __OUTLIER_FILTER_H__
+#ifndef __SENSORS_BMI088_BMP388_H__
+#define __SENSORS_BMI088_BMP388_H__
 
-#include "stabilizer_types.h"
+#include "sensors.h"
 
-bool outlierFilterValidateTdoa(tdoaMeasurement_t* tdoa);
-void outlierFilterReset();
+void sensorsBmi088Bmp388Init(void);
+bool sensorsBmi088Bmp388Test(void);
+bool sensorsBmi088Bmp388AreCalibrated(void);
+bool sensorsBmi088Bmp388ManufacturingTest(void);
+void sensorsBmi088Bmp388Acquire(sensorData_t *sensors, const uint32_t tick);
+void sensorsBmi088Bmp388WaitDataReady(void);
+bool sensorsBmi088Bmp388ReadGyro(Axis3f *gyro);
+bool sensorsBmi088Bmp388ReadAcc(Axis3f *acc);
+bool sensorsBmi088Bmp388ReadMag(Axis3f *mag);
+bool sensorsBmi088Bmp388ReadBaro(baro_t *baro);
+void sensorsBmi088Bmp388SetAccMode(accModes accMode);
+void sensorsBmi088Bmp388DataAvailableCallback(void);
 
-#endif // __OUTLIER_FILTER_H__
+#endif // __SENSORS_BMI088_BMP388_H__

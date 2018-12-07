@@ -1,13 +1,13 @@
-/*
- *    ||          ____  _ __                           
- * +------+      / __ )(_) /_______________ _____  ___ 
+/**
+ *    ||          ____  _ __
+ * +------+      / __ )(_) /_______________ _____  ___
  * | 0xBC |     / __  / / __/ ___/ ___/ __ `/_  / / _ \
  * +------+    / /_/ / / /_/ /__/ /  / /_/ / / /_/  __/
  *  ||  ||    /_____/_/\__/\___/_/   \__,_/ /___/\___/
  *
  * Crazyflie control firmware
  *
- * Copyright (C) 2011-2012 Bitcraze AB
+ * Copyright (C) 2018 Bitcraze AB
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,24 +21,23 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  *
- * system.h - Top level module header file
  */
 
-#ifndef __SYSTEM_H__
-#define __SYSTEM_H__
+#ifndef __SENSORS_MPU9250_LPS25H_H__
+#define __SENSORS_MPU9250_LPS25H_H__
 
-#include <stdbool.h>
-#include <stdint.h>
+#include "sensors.h"
 
-void systemInit(void);
-bool systemTest(void);
+void sensorsMpu9250Lps25hInit(void);
+bool sensorsMpu9250Lps25hTest(void);
+bool sensorsMpu9250Lps25hAreCalibrated(void);
+bool sensorsMpu9250Lps25hManufacturingTest(void);
+void sensorsMpu9250Lps25hAcquire(sensorData_t *sensors, const uint32_t tick);
+void sensorsMpu9250Lps25hWaitDataReady(void);
+bool sensorsMpu9250Lps25hReadGyro(Axis3f *gyro);
+bool sensorsMpu9250Lps25hReadAcc(Axis3f *acc);
+bool sensorsMpu9250Lps25hReadMag(Axis3f *mag);
+bool sensorsMpu9250Lps25hReadBaro(baro_t *baro);
+void sensorsMpu9250Lps25hSetAccMode(accModes accMode);
 
-void systemLaunch(void);
-
-
-void systemStart();
-void systemWaitStart(void);
-void systemSetCanFly(bool val);
-bool systemCanFly(void);
-
-#endif //__SYSTEM_H__
+#endif // __SENSORS_MPU9250_LPS25H_H__

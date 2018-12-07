@@ -25,7 +25,7 @@ module RakefileHelpers
   end
 
   def get_unit_test_files
-    path = $cfg['compiler']['unit_tests_path'] + 'Test*' + C_EXTENSION
+    path = $cfg['compiler']['unit_tests_path'] + 'test_*' + C_EXTENSION
     path.gsub!(/\\/, '/')
     FileList.new(path)
   end
@@ -40,9 +40,20 @@ module RakefileHelpers
     includes = []
     lines = File.readlines(filename)
     lines.each do |line|
+      # Check if there is an include that we should add
       m = line.match(/^\s*#include\s+\"\s*(.+\.[hH])\s*\"/)
       if not m.nil?
-        includes << m[1]
+        if !line.include? "@NO_MODULE"
+          includes << m[1]
+        end
+      end
+
+      # Check if there is a module to add based on an annotation
+      m = line.match(/^\/\/\s*@MODULE\s+\"\s*(.+\.)[cC]\s*\"/)
+      if not m.nil?
+        # Fake that it is a .h file
+        h_file_name = m[1] + 'h'
+        includes << h_file_name
       end
     end
     return includes
@@ -199,8 +210,9 @@ module RakefileHelpers
     test_files.each do |test|
       obj_list = []
 
-      # Detect dependencies and build required required modules
+      # Detect dependencies and build required modules
       header_list = extract_headers(test) + ['cmock.h']
+
       header_list.each do |header|
 
         #create mocks if needed
