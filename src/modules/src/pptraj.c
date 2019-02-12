@@ -232,6 +232,10 @@ struct traj_eval traj_eval_invalid()
 {
 	struct traj_eval ev;
 	ev.pos = vrepeat(NAN);
+	ev.vel = vrepeat(NAN);
+	ev.acc = vrepeat(NAN);
+	ev.omega = vrepeat(NAN);
+	ev.yaw = NAN;
 	return ev;
 }
 
