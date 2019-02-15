@@ -91,16 +91,22 @@ void commanderGetSetpoint(setpoint_t *setpoint, const state_t *state)
     }
   } else if ((currentTime - setpoint->timestamp) > COMMANDER_WDT_TIMEOUT_STABILIZE) {
     xQueueOverwrite(priorityQueue, &priorityDisable);
-    // Leveling ...
-    setpoint->mode.x = modeDisable;
-    setpoint->mode.y = modeDisable;
-    setpoint->mode.roll = modeAbs;
-    setpoint->mode.pitch = modeAbs;
-    setpoint->mode.yaw = modeVelocity;
-    setpoint->attitude.roll = 0;
-    setpoint->attitude.pitch = 0;
-    setpoint->attitudeRate.yaw = 0;
-    // Keep Z as it is
+
+    if (enableHighLevel) {
+      crtpCommanderHighLevelGetSetpoint(setpoint, state);
+    }
+    if (!enableHighLevel || crtpCommanderHighLevelIsStopped()) {
+      // Leveling ...
+      setpoint->mode.x = modeDisable;
+      setpoint->mode.y = modeDisable;
+      setpoint->mode.roll = modeAbs;
+      setpoint->mode.pitch = modeAbs;
+      setpoint->mode.yaw = modeVelocity;
+      setpoint->attitude.roll = 0;
+      setpoint->attitude.pitch = 0;
+      setpoint->attitudeRate.yaw = 0;
+      // Keep Z as it is
+    }
   }
 }
 
