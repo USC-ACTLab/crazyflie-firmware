@@ -1,6 +1,7 @@
-# Crazyflie 2.0 Firmware  [![Build Status](https://api.travis-ci.org/bitcraze/crazyflie-firmware.svg)](https://travis-ci.org/bitcraze/crazyflie-firmware)
+# Crazyflie Firmware  [![Build Status](https://api.travis-ci.org/bitcraze/crazyflie-firmware.svg)](https://travis-ci.org/bitcraze/crazyflie-firmware)
 
-This project contains the source code for the Crazyflie 2.0 firmware.
+This project contains the source code for the firmware used in the Crazyflie range of platforms, including
+the Crazyflie 2.X and the Roadrunner.
 
 ### Crazyflie 1.0 support
 
@@ -59,7 +60,7 @@ Install Cygwin with [setup-x86_64.exe](https://www.cygwin.com/setup-x86_64.exe).
 
 Download the latest `gcc-arm-none-eabi-*-win32.zip` archive from [launchpad.net](https://launchpad.net/gcc-arm-embedded/+download). Create the directory `C:\cygwin64\opt\gcc-arm-none-eabi` and extract the contents of the zip file to it.
 
-Launch a Cygwin terminal and run the following to append to your ~/.bashrc file:
+Launch a Cygwin terminal and run the following to append to your `~/.bashrc` file:
 ```bash
 echo '[[ $PATH == */opt/gcc-arm-none-eabi/bin* ]] || export PATH=/opt/gcc-arm-none-eabi/bin:$PATH' >>~/.bashrc
 source ~/.bashrc
@@ -69,13 +70,13 @@ Verify the toolchain installation with `arm-none-eabi-gcc --version`
 
 ### Cloning
 
-This repository uses git submodules. Clone with the --recursive flag
+This repository uses git submodules. Clone with the `--recursive` flag
 
 ```bash
 git clone --recursive https://github.com/bitcraze/crazyflie-firmware.git
 ```
 
-If you already have cloned the repo without the --recursive option, you need to 
+If you already have cloned the repo without the `--recursive` option, you need to 
 get the submodules manually
 
 ```bash
@@ -87,21 +88,36 @@ git submodule update
 
 ## Compiling
 
-### Crazyflie 2.0
+### Crazyflie 2.X
 
-This is the default build so just running "make" is enough or:
+This is the default build so just running ```make``` is enough or:
 ```bash
-make PLATFORM=CF2
+make PLATFORM=cf2
 ```
 
 or with the toolbelt
 
 ```bash
-tb make
+tb make PLATFORM=cf2
 ```
 
+### Roadrunner
+
+Use the ```tag``` platform
+
+```bash
+make PLATFORM=tag
+```
+
+or with the toolbelt
+
+```bash
+tb make PLATFORM=tag
+```
+
+
 ### config.mk
-To create custom build options create a file called config.mk in the tools/make/
+To create custom build options create a file called `config.mk` in the `tools/make/`
 folder and fill it with options. E.g. 
 ```
 PLATFORM=CF2
@@ -119,12 +135,12 @@ More information can be found on the
  + drivers      | Hardware driver layer
  |  + src       | Drivers source code
  |  + interface | Drivers header files. Interface to the HAL layer
- + hal          | Hardware abstaction layer
+ + hal          | Hardware abstraction layer
  |  + src       | HAL source code
  |  + interface | HAL header files. Interface with the other parts of the program
  + modules      | Firmware operating code and headers
  |  + src       | Firmware tasks source code and main.c
- |  + interface | Operating headers. Configure the firmware environement
+ |  + interface | Operating headers. Configure the firmware environment
  + utils        | Utils code. Implement utility block like the console.
  |  + src       | Utils source code
  |  + interface | Utils header files. Interface with the other parts of the program

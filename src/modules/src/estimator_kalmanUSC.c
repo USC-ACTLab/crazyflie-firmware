@@ -132,6 +132,12 @@ void estimatorKalmanUSC(state_t *state, sensorData_t *sensors, control_t *contro
 	// state->attitudeRate.yaw = gyro[2];
 }
 
+bool estimatorKalmanUSCEnqueuePosition(const positionMeasurement_t *pos)
+{
+	// TODO: do sth here...
+	return true;
+}
+
 PARAM_GROUP_START(kalmanUSC)
   PARAM_ADD(PARAM_UINT8, rstWithExtPos, &rstWithExtPos)
 PARAM_GROUP_STOP(kalmanUSC)

@@ -8,4 +8,9 @@ void estimatorKalmanUSCInit(void);
 bool estimatorKalmanUSCTest(void);
 void estimatorKalmanUSC(state_t *state, sensorData_t *sensors, control_t *control, const uint32_t tick);
 
+/**
+ * The filter supports the incorporation of additional sensors into the state estimate via the following functions:
+ */
+bool estimatorKalmanUSCEnqueuePosition(const positionMeasurement_t *pos);
+
 #endif // __ESTIMATOR_KALMAN_USC_H__

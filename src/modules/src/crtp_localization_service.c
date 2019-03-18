@@ -40,7 +40,7 @@
 
 #include "locodeck.h"
 
-#include "estimator_kalman.h"
+#include "estimator.h"
 #include "position_external.h"
 
 #define NBR_OF_RANGES_IN_PACKET   5
@@ -174,7 +174,7 @@ static void extPositionPackedHandler(CRTPPacket* pk)
 
 bool getExtPosition(state_t *state)
 {
-  if (!estimatorKalmanTest()) {
+  if (!stateEstimatorTest()) {
     return false;
   }
 
@@ -186,7 +186,7 @@ bool getExtPosition(state_t *state)
     ext_pos.y = crtpExtPosCache.targetVal[crtpExtPosCache.activeSide].y;
     ext_pos.z = crtpExtPosCache.targetVal[crtpExtPosCache.activeSide].z;
     ext_pos.stdDev = extPosStdDev;
-    estimatorKalmanEnqueuePosition(&ext_pos);
+    estimatorEnqueuePosition(&ext_pos);
 
     return true;
   }
@@ -204,7 +204,7 @@ bool getExtPosition(state_t *state)
     ext_pos.y = y;
     ext_pos.z = z;
     ext_pos.stdDev = extPosStdDev;
-    estimatorKalmanEnqueuePosition(&ext_pos);
+    estimatorEnqueuePosition(&ext_pos);
     positionExternalFresh2 = false;
   }
 

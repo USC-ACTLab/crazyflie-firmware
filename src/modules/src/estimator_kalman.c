@@ -229,8 +229,8 @@ static float measNoiseBaro = 2.0f; // meters
 static float measNoiseGyro_rollpitch = 0.1f; // radians per second
 static float measNoiseGyro_yaw = 0.1f; // radians per second
 
-static float initialX = 0.5;
-static float initialY = 0.5;
+static float initialX = 0.0;
+static float initialY = 0.0;
 static float initialZ = 0.0;
 
 // We track a TDOA skew as part of the Kalman filter
@@ -1038,7 +1038,7 @@ static void stateEstimatorUpdateWithTDOA(tdoaMeasurement_t *tdoa)
         .z = S[STATE_Z],
       };
 
-      bool sampleIsGood = outlierFilterVaildateTdoaSteps(tdoa, error, &jacobian, &estimatedPosition);
+      bool sampleIsGood = outlierFilterValidateTdoaSteps(tdoa, error, &jacobian, &estimatedPosition);
       if (sampleIsGood) {
         stateEstimatorScalarUpdate(&H, error, tdoa->stdDev);
       }
@@ -1431,39 +1431,39 @@ static bool stateEstimatorEnqueueExternalMeasurement(xQueueHandle queue, void *m
   return (result==pdTRUE);
 }
 
-bool estimatorKalmanEnqueueTDOA(tdoaMeasurement_t *uwb)
+bool estimatorKalmanEnqueueTDOA(const tdoaMeasurement_t *uwb)
 {
   ASSERT(isInit);
   return stateEstimatorEnqueueExternalMeasurement(tdoaDataQueue, (void *)uwb);
 }
 
-bool estimatorKalmanEnqueuePosition(positionMeasurement_t *pos)
+bool estimatorKalmanEnqueuePosition(const positionMeasurement_t *pos)
 {
   ASSERT(isInit);
   return stateEstimatorEnqueueExternalMeasurement(posDataQueue, (void *)pos);
 }
 
-bool estimatorKalmanEnqueueDistance(distanceMeasurement_t *dist)
+bool estimatorKalmanEnqueueDistance(const distanceMeasurement_t *dist)
 {
   ASSERT(isInit);
   return stateEstimatorEnqueueExternalMeasurement(distDataQueue, (void *)dist);
 }
 
-bool estimatorKalmanEnqueueFlow(flowMeasurement_t *flow)
+bool estimatorKalmanEnqueueFlow(const flowMeasurement_t *flow)
 {
   // A flow measurement (dnx,  dny) [accumulated pixels]
   ASSERT(isInit);
   return stateEstimatorEnqueueExternalMeasurement(flowDataQueue, (void *)flow);
 }
 
-bool estimatorKalmanEnqueueTOF(tofMeasurement_t *tof)
+bool estimatorKalmanEnqueueTOF(const tofMeasurement_t *tof)
 {
   // A distance (distance) [m] to the ground along the z_B axis.
   ASSERT(isInit);
   return stateEstimatorEnqueueExternalMeasurement(tofDataQueue, (void *)tof);
 }
 
-bool estimatorKalmanEnqueueAsoluteHeight(heightMeasurement_t *height)
+bool estimatorKalmanEnqueueAbsoluteHeight(const heightMeasurement_t *height)
 {
   // A distance (height) [m] to the ground along the z axis.
   ASSERT(isInit);
