@@ -161,17 +161,17 @@ static void compressState()
 
 static void compressSetpoint()
 {
-  stateCompressed.x = setpoint.position.x * 1000.0f;
-  stateCompressed.y = setpoint.position.y * 1000.0f;
-  stateCompressed.z = setpoint.position.z * 1000.0f;
+  setpointCompressed.x = setpoint.position.x * 1000.0f;
+  setpointCompressed.y = setpoint.position.y * 1000.0f;
+  setpointCompressed.z = setpoint.position.z * 1000.0f;
 
-  stateCompressed.vx = setpoint.velocity.x * 1000.0f;
-  stateCompressed.vy = setpoint.velocity.y * 1000.0f;
-  stateCompressed.vz = setpoint.velocity.z * 1000.0f;
+  setpointCompressed.vx = setpoint.velocity.x * 1000.0f;
+  setpointCompressed.vy = setpoint.velocity.y * 1000.0f;
+  setpointCompressed.vz = setpoint.velocity.z * 1000.0f;
 
-  stateCompressed.ax = setpoint.acceleration.x * 1000.0f;
-  stateCompressed.ay = setpoint.acceleration.y * 1000.0f;
-  stateCompressed.az = setpoint.acceleration.z * 1000.0f;
+  setpointCompressed.ax = setpoint.acceleration.x * 1000.0f;
+  setpointCompressed.ay = setpoint.acceleration.y * 1000.0f;
+  setpointCompressed.az = setpoint.acceleration.z * 1000.0f;
 }
 
 void stabilizerInit(StateEstimatorType estimator)
