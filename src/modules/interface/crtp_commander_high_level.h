@@ -57,8 +57,11 @@ extern uint8_t trajectories_memory[TRAJECTORY_MEMORY_SIZE];
 /* Public functions */
 void crtpCommanderHighLevelInit(void);
 
+// Updates the state for the planner
+void crtpCommanderHighLevelUpdateState(const state_t *state);
+
 // Retrieves the current setpoint
-void crtpCommanderHighLevelGetSetpoint(setpoint_t* setpoint, const state_t *state);
+void crtpCommanderHighLevelGetSetpoint(setpoint_t* setpoint);
 
 // Tell the trajectory planner that it should cut power.
 // Should be used if an emergency is detected.

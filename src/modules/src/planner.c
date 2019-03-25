@@ -70,7 +70,7 @@ bool plan_is_stopped(struct planner *p)
 	return p->state == TRAJECTORY_STATE_IDLE;
 }
 
-struct traj_eval plan_current_goal(struct planner *p, float t)
+struct traj_eval plan_current_goal(struct planner *p, float t, const struct traj_eval *state)
 {
 	switch (p->state) {
 		case TRAJECTORY_STATE_LANDING:
@@ -85,6 +85,9 @@ struct traj_eval plan_current_goal(struct planner *p, float t)
 			else {
 				return piecewise_eval(p->trajectory, t);
 			}
+			break;
+		case TRAJECTORY_STATE_IDLE:
+			return *state;
 
 		default:
 			return traj_eval_invalid();
@@ -121,11 +124,11 @@ int plan_land(struct planner *p, struct vec pos, float yaw, float height, float 
 	return 0;
 }
 
-int plan_go_to(struct planner *p, bool relative, struct vec hover_pos, float hover_yaw, float duration, float t)
+int plan_go_to(struct planner *p, bool relative, struct vec hover_pos, float hover_yaw, float duration, float t, const struct traj_eval *state)
 {
 	// allow in any state, i.e., can also be used to take-off or land
 
-	struct traj_eval setpoint = plan_current_goal(p, t);
+	struct traj_eval setpoint = plan_current_goal(p, t, state);
 
 	if (relative) {
 		hover_pos = vadd(hover_pos, setpoint.pos);

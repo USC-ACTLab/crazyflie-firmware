@@ -87,8 +87,10 @@ static struct trajectoryDescription trajectory_descriptions[NUM_TRAJECTORY_DEFIN
 static bool isInit = false;
 static struct planner planner;
 static uint8_t group_mask;
-static struct vec pos; // last known setpoint (position [m])
-static float yaw; // last known setpoint yaw (yaw [rad])
+// static struct vec pos; // last known setpoint (position [m])
+// static float yaw; // last known setpoint yaw (yaw [rad])
+static struct traj_eval last_known_state; // last known state
+
 static struct piecewise_traj trajectory;
 
 // makes sure that we don't evaluate the trajectory while it is being changed
@@ -191,8 +193,7 @@ void crtpCommanderHighLevelInit(void)
 
   lockTraj = xSemaphoreCreateMutex();
 
-  pos = vzero();
-  yaw = 0;
+  last_known_state = traj_eval_invalid();
 
   isInit = true;
 }
@@ -207,22 +208,28 @@ bool crtpCommanderHighLevelIsStopped()
   return plan_is_stopped(&planner);
 }
 
-void crtpCommanderHighLevelGetSetpoint(setpoint_t* setpoint, const state_t *state)
+void crtpCommanderHighLevelUpdateState(const state_t *state)
+{
+  // if we are on the ground, update the last setpoint with the current state estimate
+  if (plan_is_stopped(&planner)) {
+    last_known_state.pos = state2vec(state->position);
+    last_known_state.vel = state2vec(state->velocity);
+    last_known_state.acc = state2vec(state->acc);
+    last_known_state.omega = vzero(); // TODO: add gyro readings
+    last_known_state.yaw = radians(state->attitude.yaw);
+  }
+}
+
+void crtpCommanderHighLevelGetSetpoint(setpoint_t* setpoint)
 {
   xSemaphoreTake(lockTraj, portMAX_DELAY);
   float t = usecTimestamp() / 1e6;
-  struct traj_eval ev = plan_current_goal(&planner, t);
+  struct traj_eval ev = plan_current_goal(&planner, t, &last_known_state);
   if (!is_traj_eval_valid(&ev)) {
     // programming error
     plan_stop(&planner);
   }
   xSemaphoreGive(lockTraj);
-
-  // if we are on the ground, update the last setpoint with the current state estimate
-  if (plan_is_stopped(&planner)) {
-    pos = state2vec(state->position);
-    yaw = radians(state->attitude.yaw);
-  }
 
   if (is_traj_eval_valid(&ev)) {
     setpoint->position.x = ev.pos.x;
@@ -247,8 +254,7 @@ void crtpCommanderHighLevelGetSetpoint(setpoint_t* setpoint, const state_t *stat
     setpoint->acceleration.z = ev.acc.z;
 
     // store the last setpoint
-    pos = ev.pos;
-    yaw = ev.yaw;
+    last_known_state = ev;
   }
 }
 
@@ -309,7 +315,7 @@ int takeoff(const struct data_takeoff* data)
   if (isInGroup(data->groupMask)) {
     xSemaphoreTake(lockTraj, portMAX_DELAY);
     float t = usecTimestamp() / 1e6;
-    result = plan_takeoff(&planner, pos, yaw, data->height, data->duration, t);
+    result = plan_takeoff(&planner, last_known_state.pos, last_known_state.yaw, data->height, data->duration, t);
     xSemaphoreGive(lockTraj);
   }
   return result;
@@ -321,7 +327,7 @@ int land(const struct data_land* data)
   if (isInGroup(data->groupMask)) {
     xSemaphoreTake(lockTraj, portMAX_DELAY);
     float t = usecTimestamp() / 1e6;
-    result = plan_land(&planner, pos, yaw, data->height, data->duration, t);
+    result = plan_land(&planner, last_known_state.pos, last_known_state.yaw, data->height, data->duration, t);
     xSemaphoreGive(lockTraj);
   }
   return result;
@@ -345,7 +351,7 @@ int go_to(const struct data_go_to* data)
     struct vec hover_pos = mkvec(data->x, data->y, data->z);
     xSemaphoreTake(lockTraj, portMAX_DELAY);
     float t = usecTimestamp() / 1e6;
-    result = plan_go_to(&planner, data->relative, hover_pos, data->yaw, data->duration, t);
+    result = plan_go_to(&planner, data->relative, hover_pos, data->yaw, data->duration, t, &last_known_state);
     xSemaphoreGive(lockTraj);
   }
   return result;
@@ -374,7 +380,7 @@ int start_trajectory(const struct data_start_trajectory* data)
           else {
             traj_init = piecewise_eval(&trajectory, trajectory.t_begin);
           }
-          struct vec shift_pos = vsub(pos, traj_init.pos);
+          struct vec shift_pos = vsub(last_known_state.pos, traj_init.pos);
           trajectory.shift = shift_pos;
         } else {
           trajectory.shift = vzero();

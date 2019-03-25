@@ -45,7 +45,7 @@ enum trajectory_state
 {
 	TRAJECTORY_STATE_IDLE            = 0,
 	TRAJECTORY_STATE_FLYING          = 1,
-	TRAJECTORY_STATE_LANDING         = 3,
+	TRAJECTORY_STATE_LANDING         = 2,
 };
 
 struct planner
@@ -71,8 +71,8 @@ void plan_stop(struct planner *p);
 // and also after an emergency stop.
 bool plan_is_stopped(struct planner *p);
 
-// get the planner's current goal.
-struct traj_eval plan_current_goal(struct planner *p, float t);
+// get the planner's current goal (or the state if planner is stopped)
+struct traj_eval plan_current_goal(struct planner *p, float t, const struct traj_eval *state);
 
 // start a takeoff trajectory.
 int plan_takeoff(struct planner *p, struct vec pos, float yaw, float height, float duration, float t);
@@ -81,7 +81,7 @@ int plan_takeoff(struct planner *p, struct vec pos, float yaw, float height, flo
 int plan_land(struct planner *p, struct vec pos, float yaw, float height, float duration, float t);
 
 // move to a given position, then hover there.
-int plan_go_to(struct planner *p, bool relative, struct vec hover_pos, float hover_yaw, float duration, float t);
+int plan_go_to(struct planner *p, bool relative, struct vec hover_pos, float hover_yaw, float duration, float t, const struct traj_eval *state);
 
 // start trajectory
 int plan_start_trajectory(struct planner *p, const struct piecewise_traj* trajectory, bool reversed);

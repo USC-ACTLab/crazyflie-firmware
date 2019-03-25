@@ -73,6 +73,11 @@ void commanderSetSetpoint(setpoint_t *setpoint, int priority)
     // This is a potential race but without effect on functionality
     xQueueOverwrite(setpointQueue, setpoint);
     xQueueOverwrite(priorityQueue, &priority);
+
+    // low-level command received => stop high-level planner
+    // if (enableHighLevel) {
+    //   crtpCommanderHighLevelStop();
+    // }
   }
 }
 
@@ -82,9 +87,13 @@ void commanderGetSetpoint(setpoint_t *setpoint, const state_t *state)
   lastUpdate = setpoint->timestamp;
   uint32_t currentTime = xTaskGetTickCount();
 
+  if (enableHighLevel) {
+    crtpCommanderHighLevelUpdateState(state);
+  }
+
   if ((currentTime - setpoint->timestamp) > COMMANDER_WDT_TIMEOUT_SHUTDOWN) {
     if (enableHighLevel) {
-      crtpCommanderHighLevelGetSetpoint(setpoint, state);
+      crtpCommanderHighLevelGetSetpoint(setpoint);
     }
     if (!enableHighLevel || crtpCommanderHighLevelIsStopped()) {
       memcpy(setpoint, &nullSetpoint, sizeof(nullSetpoint));
@@ -93,7 +102,7 @@ void commanderGetSetpoint(setpoint_t *setpoint, const state_t *state)
     xQueueOverwrite(priorityQueue, &priorityDisable);
 
     if (enableHighLevel) {
-      crtpCommanderHighLevelGetSetpoint(setpoint, state);
+      crtpCommanderHighLevelGetSetpoint(setpoint);
     }
     if (!enableHighLevel || crtpCommanderHighLevelIsStopped()) {
       // Leveling ...
