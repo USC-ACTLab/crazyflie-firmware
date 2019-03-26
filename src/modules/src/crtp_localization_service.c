@@ -71,19 +71,8 @@ typedef struct {
   int16_t z; // mm
 } __attribute__((packed)) extPositionPackedItem;
 
-/**
- * Position data cache
- */
-typedef struct
-{
-  struct CrtpExtPosition targetVal[2];
-  bool activeSide;
-  uint32_t timestamp; // FreeRTOS ticks
-} ExtPositionCache;
-
 // Struct for logging position information
 static positionMeasurement_t ext_pos;
-static ExtPositionCache crtpExtPosCache;
 static CRTPPacket pkRange;
 static uint8_t rangeIndex;
 static bool enableRangeStreamFloat = false;
@@ -127,9 +116,13 @@ static void locSrvCrtpCB(CRTPPacket* pk)
 
 static void extPositionHandler(CRTPPacket* pk)
 {
-  crtpExtPosCache.targetVal[!crtpExtPosCache.activeSide] = *((struct CrtpExtPosition*)pk->data);
-  crtpExtPosCache.activeSide = !crtpExtPosCache.activeSide;
-  crtpExtPosCache.timestamp = xTaskGetTickCount();
+  const struct CrtpExtPosition* data = (const struct CrtpExtPosition*)pk;
+
+  ext_pos.x = data->x;
+  ext_pos.y = data->y;
+  ext_pos.z = data->z;
+  ext_pos.stdDev = extPosStdDev;
+  estimatorEnqueuePosition(&ext_pos);
 }
 
 static void genericLocHandle(CRTPPacket* pk)
@@ -158,57 +151,15 @@ static void extPositionPackedHandler(CRTPPacket* pk)
   for (uint8_t i = 0; i < numItems; ++i) {
     const extPositionPackedItem* item = (const extPositionPackedItem*)&pk->data[i * sizeof(extPositionPackedItem)];
     if (item->id == my_id) {
-      struct CrtpExtPosition position;
-      position.x = item->x / 1000.0f;
-      position.y = item->y / 1000.0f;
-      position.z = item->z / 1000.0f;
-
-      crtpExtPosCache.targetVal[!crtpExtPosCache.activeSide] = position;
-      crtpExtPosCache.activeSide = !crtpExtPosCache.activeSide;
-      crtpExtPosCache.timestamp = xTaskGetTickCount();
+      ext_pos.x = item->x / 1000.0f;
+      ext_pos.y = item->y / 1000.0f;
+      ext_pos.z = item->z / 1000.0f;
+      ext_pos.stdDev = extPosStdDev;
+      estimatorEnqueuePosition(&ext_pos);
 
       break;
     }
   }
-}
-
-bool getExtPosition(state_t *state)
-{
-  if (!stateEstimatorTest()) {
-    return false;
-  }
-
-  // Only use position information if it's valid, recent, and if the kalman filter is enabled
-  if (getStateEstimator() == kalmanEstimator && 
-      (xTaskGetTickCount() - crtpExtPosCache.timestamp) < M2T(5)) {
-    // Get the updated position from the mocap
-    ext_pos.x = crtpExtPosCache.targetVal[crtpExtPosCache.activeSide].x;
-    ext_pos.y = crtpExtPosCache.targetVal[crtpExtPosCache.activeSide].y;
-    ext_pos.z = crtpExtPosCache.targetVal[crtpExtPosCache.activeSide].z;
-    ext_pos.stdDev = extPosStdDev;
-    estimatorEnqueuePosition(&ext_pos);
-
-    return true;
-  }
-
-  // allow the official kalman filter to work with Crazyswarm position service
-  float x, y, z, q0, q1, q2, q3, vx, vy, vz;
-  uint16_t last_time_in_ms;
-  positionExternalGetLastData(
-    &x, &y, &z,
-    &q0, &q1, &q2, &q3,
-    &vx, &vy, &vz,
-    &last_time_in_ms);
-  if (positionExternalFresh2) {
-    ext_pos.x = x;
-    ext_pos.y = y;
-    ext_pos.z = z;
-    ext_pos.stdDev = extPosStdDev;
-    estimatorEnqueuePosition(&ext_pos);
-    positionExternalFresh2 = false;
-  }
-
-  return false;
 }
 
 void locSrvSendPacket(locsrv_t type, uint8_t *data, uint8_t length)

@@ -35,6 +35,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
+#include <ctype.h>
 #include "stm32fxxx.h"
 
 #include "FreeRTOS.h"
@@ -212,7 +213,7 @@ static void csLow(void)
 
 /********** FS helper function ***************/
 
-// reads a line and returns the string without any comment
+// reads a line and returns the string without any whitespace/comment
 //  * comments are indicated by #
 //  * a line ending is marked by \n
 //  * only up to "len" will be read
@@ -224,24 +225,22 @@ TCHAR* f_gets_without_comments (
 {
   int n = 0;
   TCHAR c, *p = buff;
-  BYTE s[2];
   UINT rc;
   bool isComment = false;
 
   while (n < len - 1) { /* Read characters until buffer gets filled */
-    f_read(fp, s, 1, &rc);
+    f_read(fp, &c, 1, &rc);
     if (rc != 1) {
       break;
-    }
-    c = s[0];
-    if (_USE_STRFUNC == 2 && c == '\r') {
-      continue; /* Strip '\r' */
     }
     if (c == '\n') {
       break;   /* Break on EOL */
     }
+    if (isspace(c)) {
+      continue; /* Strip whitespace */
+    }
     if (c == '#') {
-      isComment = true;
+      isComment = true; /* keep reading until end of line */
     }
     if (!isComment) {
       *p++ = c;
@@ -251,6 +250,7 @@ TCHAR* f_gets_without_comments (
   *p = 0;
   return n ? buff : 0;      /* When no data read (eof or error), return with error. */
 }
+
 
 /*********** Deck driver initialization ***************/
 
@@ -310,15 +310,12 @@ static void usdInit(DeckInfo *info)
               line[i] = 0;
               name = &line[i+1];
               i = strlen(name);
-              if (name[i-1] == '\n') {
-                name[i-1] = 0; // remove newline at the end
-              }
               break;
             }
           }
           int varid = logGetVarId(group, name);
           if (varid == -1) {
-            DEBUG_PRINT("Unknown log variable %s.%s.\n", group, name);
+            DEBUG_PRINT("Unknown log variable %s.%s\n", group, name);
             continue;
           }
 
@@ -330,9 +327,9 @@ static void usdInit(DeckInfo *info)
         DEBUG_PRINT("Config read [OK].\n");
         DEBUG_PRINT("Frequency: %dHz. Buffer size: %d\n",
                     usdLogConfig.frequency, usdLogConfig.bufferSize);
-        DEBUG_PRINT("Filename: %s.\n", usdLogConfig.filename);
+        DEBUG_PRINT("Filename: %s\n", usdLogConfig.filename);
         DEBUG_PRINT("enOnStartup: %d. mode: %d\n", usdLogConfig.enableOnStartup, usdLogConfig.mode);
-        DEBUG_PRINT("slots: %d. size: %d.\n", usdLogConfig.numSlots, usdLogConfig.numBytes);
+        DEBUG_PRINT("slots: %d, %d.\n", usdLogConfig.numSlots, usdLogConfig.numBytes);
 
         /* create usd-log task */
         xTaskCreate(usdLogTask, USDLOG_TASK_NAME,
