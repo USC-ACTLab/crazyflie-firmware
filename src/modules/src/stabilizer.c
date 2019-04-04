@@ -565,12 +565,22 @@ LOG_ADD(LOG_FLOAT, az, &setpoint.acceleration.z)
 
 LOG_ADD(LOG_FLOAT, roll, &setpoint.attitude.roll)
 LOG_ADD(LOG_FLOAT, pitch, &setpoint.attitude.pitch)
-LOG_ADD(LOG_FLOAT, yaw, &setpoint.attitude.yaw)
-
-LOG_ADD(LOG_FLOAT, rollRate, &setpoint.attitudeRate.roll)
-LOG_ADD(LOG_FLOAT, pitchRate, &setpoint.attitudeRate.pitch)
-LOG_ADD(LOG_FLOAT, yawRate, &setpoint.attitudeRate.yaw)
+LOG_ADD(LOG_FLOAT, yaw, &setpoint.attitudeRate.yaw)
 LOG_GROUP_STOP(ctrltarget)
+
+LOG_GROUP_START(ctrltargetZ)
+LOG_ADD(LOG_INT16, x, &setpointCompressed.x)   // position - mm
+LOG_ADD(LOG_INT16, y, &setpointCompressed.y)
+LOG_ADD(LOG_INT16, z, &setpointCompressed.z)
+
+LOG_ADD(LOG_INT16, vx, &setpointCompressed.vx) // velocity - mm / sec
+LOG_ADD(LOG_INT16, vy, &setpointCompressed.vy)
+LOG_ADD(LOG_INT16, vz, &setpointCompressed.vz)
+
+LOG_ADD(LOG_INT16, ax, &setpointCompressed.ax) // acceleration - mm / sec^2
+LOG_ADD(LOG_INT16, ay, &setpointCompressed.ay)
+LOG_ADD(LOG_INT16, az, &setpointCompressed.az)
+LOG_GROUP_STOP(ctrltargetZ)
 
 LOG_GROUP_START(stabilizer)
 LOG_ADD(LOG_FLOAT, roll, &state.attitude.roll)
@@ -646,33 +656,25 @@ LOG_ADD(LOG_FLOAT, qz, &state.attitudeQuaternion.z)
 LOG_ADD(LOG_FLOAT, qw, &state.attitudeQuaternion.w)
 LOG_GROUP_STOP(stateEstimate)
 
-LOG_GROUP_START(stateCompressed)
+LOG_GROUP_START(stateEstimateZ)
 LOG_ADD(LOG_INT16, x, &stateCompressed.x)                 // position - mm
 LOG_ADD(LOG_INT16, y, &stateCompressed.y)
 LOG_ADD(LOG_INT16, z, &stateCompressed.z)
+
 LOG_ADD(LOG_INT16, vx, &stateCompressed.vx)               // velocity - mm / sec
 LOG_ADD(LOG_INT16, vy, &stateCompressed.vy)
 LOG_ADD(LOG_INT16, vz, &stateCompressed.vz)
+
 LOG_ADD(LOG_INT16, ax, &stateCompressed.ax)               // acceleration - mm / sec^2
 LOG_ADD(LOG_INT16, ay, &stateCompressed.ay)
 LOG_ADD(LOG_INT16, az, &stateCompressed.az)
-LOG_ADD(LOG_INT32, quat, &stateCompressed.quat)           // compressed quaternion, see quatcompress.h
+
+LOG_ADD(LOG_UINT32, quat, &stateCompressed.quat)           // compressed quaternion, see quatcompress.h
+
 LOG_ADD(LOG_INT16, rateRoll, &stateCompressed.rateRoll)   // angular velocity - milliradians / sec
 LOG_ADD(LOG_INT16, ratePitch, &stateCompressed.ratePitch)
 LOG_ADD(LOG_INT16, rateYaw, &stateCompressed.rateYaw)
-LOG_GROUP_STOP(stateCompressed)
-
-LOG_GROUP_START(spCompressed)
-LOG_ADD(LOG_INT16, x, &setpointCompressed.x)                 // position - mm
-LOG_ADD(LOG_INT16, y, &setpointCompressed.y)
-LOG_ADD(LOG_INT16, z, &setpointCompressed.z)
-LOG_ADD(LOG_INT16, vx, &setpointCompressed.vx)               // velocity - mm / sec
-LOG_ADD(LOG_INT16, vy, &setpointCompressed.vy)
-LOG_ADD(LOG_INT16, vz, &setpointCompressed.vz)
-LOG_ADD(LOG_INT16, ax, &setpointCompressed.ax)               // acceleration - mm / sec^2
-LOG_ADD(LOG_INT16, ay, &setpointCompressed.ay)
-LOG_ADD(LOG_INT16, az, &setpointCompressed.az)
-LOG_GROUP_STOP(spCompressed)
+LOG_GROUP_STOP(stateEstimateZ)
 
 LOG_GROUP_START(latency)
 LOG_ADD(LOG_UINT32, intToOut, &inToOutLatency)
