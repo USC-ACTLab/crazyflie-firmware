@@ -42,4 +42,8 @@ void ekf_init(struct ekf *ekf, float const pos[3], float const vel[3], float con
 
 void ekf_imu(struct ekf const *ekf_prev, struct ekf *ekf, float const acc[3], float const gyro[3], float dt);
 
-void ekf_vicon(struct ekf const *ekf_prev, struct ekf *ekf, float const pos_vicon[3], float const vel_vicon[3], float const quat_vicon[4]);
+void ekf_pose_and_vel(struct ekf const *old, struct ekf *new, float const pos_measured[3], float const vel_measured[3], float const quat_measured[4]);
+
+void ekf_pose(struct ekf const *old, struct ekf *new, float const pos_measured[3], float const quat_measured[4]);
+
+void ekf_position(struct ekf const *old, struct ekf *new, float const pos_measured[3]);

@@ -13,6 +13,8 @@
 static int usec_gain;
 static int usec_corr;
 static int usec_cov;
+static int usec_setup;
+static int usec_innov;
 
 // TEMP profiling
 #ifndef CMOCK
@@ -59,11 +61,11 @@ static void mult_K_block33(float m[EKF_N][EKF_N], int row, int col, struct mat33
 	}
 }
 
-// static void set_H_block33(float h[EKF_M][EKF_N], int row, int col, struct mat33 const *block)
-// {
-// 	float *blockptr = &h[row][col];
-// 	set_block33_rowmaj(blockptr, EKF_N, block);
-// }
+static void set_H_block33(float h[EKF_M][EKF_N], int row, int col, struct mat33 const *block)
+{
+	float *blockptr = &h[row][col];
+	set_block33_rowmaj(blockptr, EKF_N, block);
+}
 
 static void set_G_block33(float G[EKF_N][EKF_DISTURBANCE], int row, int col, struct mat33 const *block)
 {
@@ -190,8 +192,8 @@ void ekf_imu(struct ekf const *ekf_prev, struct ekf *ekf, float const acc[3], fl
 	ekf->vel = vadd(ekf_prev->vel, vscl(dt, acc_world));
 	ekf->pos = vadd(ekf_prev->pos, vscl(dt, ekf->vel));
 
-  // provide smoothed acceleration as a convenience for other system components
-  ekf->acc = vadd(vscl(0.7, ekf_prev->acc), vscl(0.3, acc_world));
+	// provide smoothed acceleration as a convenience for other system components
+	ekf->acc = vadd(vscl(0.7, ekf_prev->acc), vscl(0.3, acc_world));
 
 	//-------------------------- update covariance --------------------------//
 	// TODO should use old quat??
@@ -208,18 +210,18 @@ void ekf_imu(struct ekf const *ekf_prev, struct ekf *ekf, float const acc[3], fl
 	checknan("P", AS_1D(ekf->P), EKF_N * EKF_N);
 }
 
-void ekf_vicon(struct ekf const *old, struct ekf *new, float const pos_vicon[3], float const vel_vicon[3], float const quat_vicon[4])//, double *debug)
+void ekf_pose_and_vel(struct ekf const *old, struct ekf *new, float const pos_measured[3], float const vel_measured[3], float const quat_measured[4])
 {
 	*new = *old;
 
-	struct vec const p_vicon = vloadf(pos_vicon);
-	struct vec const v_vicon = vloadf(vel_vicon);
-	struct quat const q_vicon = qloadf(quat_vicon);
+	struct vec const p_measured = vloadf(pos_measured);
+	struct vec const v_measured = vloadf(vel_measured);
+	struct quat const q_measured = qloadf(quat_measured);
 
-	struct quat const q_residual = qqmul(qinv(old->quat), q_vicon);
+	struct quat const q_residual = qqmul(qinv(old->quat), q_measured);
 	struct vec const err_quat = vscl(2.0f / q_residual.w, quatimagpart(q_residual));
-	struct vec const err_pos = vsub(p_vicon, old->pos);
-	struct vec const err_vel = vsub(v_vicon, old->vel);
+	struct vec const err_pos = vsub(p_measured, old->pos);
+	struct vec const err_vel = vsub(v_measured, old->vel);
 
 	float residual[EKF_M];
 	vstoref(err_pos, residual);
@@ -304,6 +306,219 @@ void ekf_vicon(struct ekf const *old, struct ekf *new, float const pos_vicon[3],
 	usec_cov = toc();
 }
 
+void ekf_pose(struct ekf const *old, struct ekf *new, float const pos_measured[3], float const quat_measured[4])
+{
+	tic();
+	*new = *old;
+
+	struct vec const p_measured = vloadf(pos_measured);
+	struct quat const q_measured = qloadf(quat_measured);
+
+	struct quat const q_residual = qqmul(qinv(old->quat), q_measured);
+	struct vec const err_quat = vscl(2.0f / q_residual.w, quatimagpart(q_residual));
+	struct vec const err_pos = vsub(p_measured, old->pos);
+
+	float residual[EKF_M];
+	vstoref(err_pos, residual);
+	vstoref(err_quat, residual + 6);
+
+	// TODO this matrix is just identity blocks
+	// we should be able to hand-code the multiplication to be much more efficient
+	static float H[EKF_M][EKF_N];
+	ZEROARR(H);
+	struct mat33 m_eye = meye();
+	set_H_block33(H, 0, 0, &m_eye);
+	set_H_block33(H, 6, 6, &m_eye);
+	usec_setup = toc();
+
+	tic();
+	// S = H P H' + R  :  innovation
+	static float PHt[EKF_N][EKF_M];
+	ZEROARR(PHt);
+	SGEMM2D('n', 't', EKF_N, EKF_M, EKF_N, 1.0, old->P, H, 0.0, PHt);
+
+	static float S[EKF_M][EKF_M];
+	ZEROARR(S);
+	SGEMM2D('n', 'n', EKF_M, EKF_M, EKF_N, 1.0, H, PHt, 0.0, S);
+	checknan("S", AS_1D(S), EKF_M * EKF_M);
+
+	// diag only, no cov
+	float const Rdiag[EKF_M] =
+		{ ext_var_xy, ext_var_xy, ext_var_xy };
+	static float R[EKF_M][EKF_M];
+	ZEROARR(R);
+	for (int i = 0; i < EKF_M; ++i) {
+		S[i][i] += Rdiag[i];
+		R[i][i] = Rdiag[i];
+	}
+	usec_innov = toc();
+
+	// K = P H' S^-1   :  gain
+
+	tic();
+	static float Sinv[EKF_M][EKF_M];
+	static float scratch[EKF_M];
+	cholsl(AS_1D(S), AS_1D(Sinv), scratch, EKF_M);
+	checknan("S^-1", AS_1D(Sinv), EKF_M * EKF_M);
+
+	static float HtSinv[EKF_N][EKF_M];
+	ZEROARR(HtSinv);
+	SGEMM2D('t', 'n', EKF_N, EKF_M, EKF_M, 1.0, H, Sinv, 0.0, HtSinv);
+
+	static float K[EKF_N][EKF_M];
+	ZEROARR(K);
+	SGEMM2D('n', 'n', EKF_N, EKF_M, EKF_N, 1.0, old->P, HtSinv, 0.0, K);
+	checknan("K", AS_1D(K), EKF_N * EKF_M);
+	usec_gain = toc();
+
+
+	// K residual : correction
+
+	tic();
+	static float correction[EKF_N];
+	ZEROARR(correction);
+	sgemm('n', 'n', EKF_N, 1, EKF_M, 1.0, AS_1D(K), residual, 0.0, correction);
+
+	new->pos = vadd(old->pos, vloadf(correction + 0));
+	new->vel = vadd(old->vel, vloadf(correction + 3));
+	struct quat error_quat = rpy2quat_small(vloadf(correction + 6));
+	new->quat = qnormalize(qqmul(old->quat, error_quat));
+	usec_corr = toc();
+
+
+	// Pnew = (I - KH) P (I - KH)^T + KRK^T  :  covariance update
+
+	tic();
+	static float RKt[EKF_M][EKF_N];
+	ZEROARR(RKt);
+	SGEMM2D('n', 't', EKF_M, EKF_N, EKF_M, 1.0, R, K, 0.0, RKt);
+
+	// KRKt - store in P so we can add to it in-place with SGEMM later
+	SGEMM2D('n', 'n', EKF_N, EKF_N, EKF_M, 1.0, K, RKt, 0.0, new->P);
+	checknan("KRK^T", AS_1D(new->P), EKF_N * EKF_N);
+
+	// I - KH
+	static float IMKH[EKF_N][EKF_N];
+	eyeN(AS_1D(IMKH), EKF_N);
+	SGEMM2D('n', 'n', EKF_N, EKF_N, EKF_M, -1.0, K, H, 1.0, IMKH);
+	checknan("I-KH", AS_1D(IMKH), EKF_N * EKF_N);
+	checknan("old->P", AS_1D(old->P), EKF_N * EKF_N);
+
+	static float PIMKHt[EKF_N][EKF_N];
+	ZEROARR(PIMKHt);
+	SGEMM2D('n', 't', EKF_N, EKF_N, EKF_N, 1.0, old->P, IMKH, 0.0, PIMKHt);
+	checknan("P(I-KH)^T", AS_1D(PIMKHt), EKF_N * EKF_N);
+
+	// recall that new->P already contains KRK^T, and we use beta=1.0 to add in-place
+	SGEMM2D('n', 'n', EKF_N, EKF_N, EKF_N, 1.0, IMKH, PIMKHt, 1.0, new->P);
+	checknan("P-New", AS_1D(new->P), EKF_N * EKF_N);
+	usec_cov = toc();
+}
+
+void ekf_position(struct ekf const *old, struct ekf *new, float const pos_measured[3])
+{
+	tic();
+	*new = *old;
+
+	struct vec const p_measured = vloadf(pos_measured);
+
+	struct vec err_pos = vsub(p_measured, old->pos);
+
+	float residual[EKF_M];
+	vstoref(err_pos, residual);
+
+	// TODO this matrix is just identity blocks
+	// we should be able to hand-code the multiplication to be much more efficient
+	static float H[EKF_M][EKF_N];
+	ZEROARR(H);
+	struct mat33 m_eye = meye();
+	set_H_block33(H, 0, 0, &m_eye);
+	usec_setup = toc();
+
+	tic();
+	// S = H P H' + R  :  innovation
+	static float PHt[EKF_N][EKF_M];
+	ZEROARR(PHt);
+	SGEMM2D('n', 't', EKF_N, EKF_M, EKF_N, 1.0, old->P, H, 0.0, PHt);
+
+	static float S[EKF_M][EKF_M];
+	ZEROARR(S);
+	SGEMM2D('n', 'n', EKF_M, EKF_M, EKF_N, 1.0, H, PHt, 0.0, S);
+	checknan("S", AS_1D(S), EKF_M * EKF_M);
+
+	// diag only, no cov
+	float const Rdiag[EKF_M] =
+		{ ext_var_xy, ext_var_xy, ext_var_xy };
+	static float R[EKF_M][EKF_M];
+	ZEROARR(R);
+	for (int i = 0; i < EKF_M; ++i) {
+		S[i][i] += Rdiag[i];
+		R[i][i] = Rdiag[i];
+	}
+	usec_innov = toc();
+
+	// K = P H' S^-1   :  gain
+
+	tic();
+	static float Sinv[EKF_M][EKF_M];
+	static float scratch[EKF_M];
+	cholsl(AS_1D(S), AS_1D(Sinv), scratch, EKF_M);
+	checknan("S^-1", AS_1D(Sinv), EKF_M * EKF_M);
+
+	static float HtSinv[EKF_N][EKF_M];
+	ZEROARR(HtSinv);
+	SGEMM2D('t', 'n', EKF_N, EKF_M, EKF_M, 1.0, H, Sinv, 0.0, HtSinv);
+
+	static float K[EKF_N][EKF_M];
+	ZEROARR(K);
+	SGEMM2D('n', 'n', EKF_N, EKF_M, EKF_N, 1.0, old->P, HtSinv, 0.0, K);
+	checknan("K", AS_1D(K), EKF_N * EKF_M);
+	usec_gain = toc();
+
+
+	// K residual : correction
+
+	tic();
+	static float correction[EKF_N];
+	ZEROARR(correction);
+	sgemm('n', 'n', EKF_N, 1, EKF_M, 1.0, AS_1D(K), residual, 0.0, correction);
+
+	new->pos = vadd(old->pos, vloadf(correction + 0));
+	new->vel = vadd(old->vel, vloadf(correction + 3));
+	struct quat error_quat = rpy2quat_small(vloadf(correction + 6));
+	new->quat = qnormalize(qqmul(old->quat, error_quat));
+	usec_corr = toc();
+
+
+	// Pnew = (I - KH) P (I - KH)^T + KRK^T  :  covariance update
+
+	tic();
+	static float RKt[EKF_M][EKF_N];
+	ZEROARR(RKt);
+	SGEMM2D('n', 't', EKF_M, EKF_N, EKF_M, 1.0, R, K, 0.0, RKt);
+
+	// KRKt - store in P so we can add to it in-place with SGEMM later
+	SGEMM2D('n', 'n', EKF_N, EKF_N, EKF_M, 1.0, K, RKt, 0.0, new->P);
+	checknan("KRK^T", AS_1D(new->P), EKF_N * EKF_N);
+
+	// I - KH
+	static float IMKH[EKF_N][EKF_N];
+	eyeN(AS_1D(IMKH), EKF_N);
+	SGEMM2D('n', 'n', EKF_N, EKF_N, EKF_M, -1.0, K, H, 1.0, IMKH);
+	checknan("I-KH", AS_1D(IMKH), EKF_N * EKF_N);
+	checknan("old->P", AS_1D(old->P), EKF_N * EKF_N);
+
+	static float PIMKHt[EKF_N][EKF_N];
+	ZEROARR(PIMKHt);
+	SGEMM2D('n', 't', EKF_N, EKF_N, EKF_N, 1.0, old->P, IMKH, 0.0, PIMKHt);
+	checknan("P(I-KH)^T", AS_1D(PIMKHt), EKF_N * EKF_N);
+
+	// recall that new->P already contains KRK^T, and we use beta=1.0 to add in-place
+	SGEMM2D('n', 'n', EKF_N, EKF_N, EKF_N, 1.0, IMKH, PIMKHt, 1.0, new->P);
+	checknan("P-New", AS_1D(new->P), EKF_N * EKF_N);
+	usec_cov = toc();
+}
+
 
 #ifndef CMOCK
 PARAM_GROUP_START(ekf)
@@ -318,5 +533,7 @@ LOG_GROUP_START(ekfprof)
 LOG_ADD(LOG_UINT32, usec_gain, &usec_gain)
 LOG_ADD(LOG_UINT32, usec_corr, &usec_corr)
 LOG_ADD(LOG_UINT32, usec_cov, &usec_cov)
+LOG_ADD(LOG_UINT32, usec_setup, &usec_setup)
+LOG_ADD(LOG_UINT32, usec_innov, &usec_innov)
 LOG_GROUP_STOP(ekfprof)
 #endif

@@ -12,6 +12,10 @@
 #include "sensors.h"
 #include "param.h"
 
+#include "stm32f4xx.h"
+#include "FreeRTOS.h"
+#include "queue.h"
+
 #define GRAV (9.81f)
 
 
@@ -42,6 +46,22 @@ static struct vec3_s ekf2vec(struct vec v)
 	return v3s;
 }
 
+static xQueueHandle measurementsQueue;
+#define MEASUREMENTS_QUEUE_LENGTH (10)
+
+enum measurementType_e
+{
+	measurementPosition,
+};
+
+struct measurement
+{
+	enum measurementType_e type;
+	union {
+		positionMeasurement_t position;
+	};
+};
+
 // public functions
 
 void estimatorKalmanUSCInit(void)
@@ -49,6 +69,10 @@ void estimatorKalmanUSCInit(void)
 	// Initialize to 0 so gyro integration still works without Vicon
 	float init[] = {0, 0, 0, 1};
 	ekf_init(ekf_back, init, init, init);
+	
+
+	measurementsQueue = xQueueCreate(MEASUREMENTS_QUEUE_LENGTH, sizeof(struct measurement));
+
 	initialized = true;
 }
 
@@ -105,12 +129,22 @@ void estimatorKalmanUSC(state_t *state, sensorData_t *sensors, control_t *contro
 			&vel[0], &vel[1], &vel[2],
 			&last_time_in_ms);
 
-		ekf_vicon(ekf_back, ekf_front, pos, vel, quat);
+		ekf_pose_and_vel(ekf_back, ekf_front, pos, vel, quat);
 		ekf_flip();
 
 		positionExternalFresh = false;
 	} else {
 		positionExternalUpdateDt();
+	}
+
+	struct measurement m;
+	while (pdTRUE == xQueueReceive(measurementsQueue, &m, 0)) {
+		switch(m.type) {
+			case measurementPosition:
+				ekf_position(ekf_back, ekf_front, m.position.pos);
+				break;
+		}
+		ekf_flip();
 	}
 
 	state->position = ekf2vec(ekf_back->pos);
@@ -132,10 +166,31 @@ void estimatorKalmanUSC(state_t *state, sensorData_t *sensors, control_t *contro
 	// state->attitudeRate.yaw = gyro[2];
 }
 
+static bool stateEstimatorUSCEnqueueExternalMeasurement(void *measurement)
+{
+  portBASE_TYPE result;
+  bool isInInterrupt = (SCB->ICSR & SCB_ICSR_VECTACTIVE_Msk) != 0;
+
+  if (isInInterrupt) {
+    portBASE_TYPE xHigherPriorityTaskWoken = pdFALSE;
+    result = xQueueSendFromISR(measurementsQueue, measurement, &xHigherPriorityTaskWoken);
+    if(xHigherPriorityTaskWoken == pdTRUE)
+    {
+      portYIELD();
+    }
+  } else {
+    result = xQueueSend(measurementsQueue, measurement, 0);
+  }
+  return (result==pdTRUE);
+}
+
 bool estimatorKalmanUSCEnqueuePosition(const positionMeasurement_t *pos)
 {
-	// TODO: do sth here...
-	return true;
+	struct measurement m = {
+		.type = measurementPosition,
+		.position = *pos
+	};
+	return stateEstimatorUSCEnqueueExternalMeasurement((void *)&m);
 }
 
 PARAM_GROUP_START(kalmanUSC)
