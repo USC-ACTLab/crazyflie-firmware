@@ -279,7 +279,7 @@ struct traj_eval poly4d_eval(struct poly4d const *p, float t)
 	// float thrust_mag = mass * vmag(thrust);
 
 	struct vec z_body = vnormalize(thrust);
-	struct vec x_world = mkvec(cos(out.yaw), sin(out.yaw), 0);
+	struct vec x_world = mkvec(cosf(out.yaw), sinf(out.yaw), 0);
 	struct vec y_body = vnormalize(vcross(z_body, x_world));
 	struct vec x_body = vcross(y_body, z_body);
 
@@ -289,6 +289,10 @@ struct traj_eval poly4d_eval(struct poly4d const *p, float t)
 	out.omega.x = -vdot(h_w, y_body);
 	out.omega.y = vdot(h_w, x_body);
 	out.omega.z = z_body.z * dyaw;
+
+    // compute required roll/pitch angles
+    out.pitch = sinf(-x_body.z);
+    out.roll = atan2f(y_body.z, z_body.z);
 
 	return out;
 }

@@ -121,6 +121,8 @@ static struct {
   int16_t ax;
   int16_t ay;
   int16_t az;
+  // compressed quaternion, see quatcompress.h
+  int32_t quat;
 } setpointCompressed;
 
 static void stabilizerTask(void* param);
@@ -172,6 +174,13 @@ static void compressSetpoint()
   setpointCompressed.ax = setpoint.acceleration.x * 1000.0f;
   setpointCompressed.ay = setpoint.acceleration.y * 1000.0f;
   setpointCompressed.az = setpoint.acceleration.z * 1000.0f;
+
+  float const q[4] = {
+    setpoint.attitudeQuaternion.x,
+    setpoint.attitudeQuaternion.y,
+    setpoint.attitudeQuaternion.z,
+    setpoint.attitudeQuaternion.w};
+  setpointCompressed.quat = quatcompress(q);
 }
 
 void stabilizerInit(StateEstimatorType estimator)
@@ -580,6 +589,8 @@ LOG_ADD(LOG_INT16, vz, &setpointCompressed.vz)
 LOG_ADD(LOG_INT16, ax, &setpointCompressed.ax) // acceleration - mm / sec^2
 LOG_ADD(LOG_INT16, ay, &setpointCompressed.ay)
 LOG_ADD(LOG_INT16, az, &setpointCompressed.az)
+
+LOG_ADD(LOG_UINT32, quat, &setpointCompressed.quat) // compressed quaternion, see quatcompress.h
 LOG_GROUP_STOP(ctrltargetZ)
 
 LOG_GROUP_START(stabilizer)

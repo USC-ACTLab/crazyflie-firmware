@@ -231,6 +231,11 @@ void crtpCommanderHighLevelGetSetpoint(setpoint_t* setpoint, const state_t *stat
     setpoint->velocity.x = ev.vel.x;
     setpoint->velocity.y = ev.vel.y;
     setpoint->velocity.z = ev.vel.z;
+    struct quat quat = rpy2quat(mkvec(ev.roll, ev.pitch, ev.yaw));
+    setpoint->attitudeQuaternion.x = quat.x;
+    setpoint->attitudeQuaternion.y = quat.y;
+    setpoint->attitudeQuaternion.z = quat.z;
+    setpoint->attitudeQuaternion.w = quat.w;
     setpoint->attitude.yaw = degrees(ev.yaw);
     setpoint->attitudeRate.roll = degrees(ev.omega.x);
     setpoint->attitudeRate.pitch = degrees(ev.omega.y);

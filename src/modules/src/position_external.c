@@ -62,6 +62,19 @@ static float v_y;
 static float v_z;
 static uint16_t dt;
 
+static struct {
+  // position - mm
+  int16_t x;
+  int16_t y;
+  int16_t z;
+  // velocity - mm / sec
+  int16_t vx;
+  int16_t vy;
+  int16_t vz;
+  // compressed quaternion, see quatcompress.h
+  int32_t quat;
+} stateCompressed;
+
 // #define MEASURE_PACKET_DROPS
 #ifdef MEASURE_PACKET_DROPS
 static uint32_t packet_drop_counts[10];
@@ -183,6 +196,16 @@ static void positionExternalCrtpCB(CRTPPacket* pk)
       posExtLastPos = mkvec(x, y, z);
       posExtLastVel = mkvec(v_x, v_y, v_z);
 
+      stateCompressed.x = x * 1000.0f;
+      stateCompressed.y = y * 1000.0f;
+      stateCompressed.z = z * 1000.0f;
+
+      stateCompressed.vx = v_x * 1000.0f;
+      stateCompressed.vy = v_y * 1000.0f;
+      stateCompressed.vz = v_z * 1000.0f;
+
+      stateCompressed.quat = d->pose[i].quat;
+
       lastTime = xTaskGetTickCount();
       positionExternalFresh = true;
       positionExternalFresh2 = true;
@@ -215,6 +238,19 @@ LOG_ADD(LOG_FLOAT, x, &lastX)
 LOG_ADD(LOG_FLOAT, y, &lastY)
 LOG_ADD(LOG_FLOAT, z, &lastZ)
 LOG_GROUP_STOP(vicon)
+
+LOG_GROUP_START(viconZ)
+LOG_ADD(LOG_INT16, x, &stateCompressed.x)                 // position - mm
+LOG_ADD(LOG_INT16, y, &stateCompressed.y)
+LOG_ADD(LOG_INT16, z, &stateCompressed.z)
+
+LOG_ADD(LOG_INT16, vx, &stateCompressed.vx)               // velocity - mm / sec
+LOG_ADD(LOG_INT16, vy, &stateCompressed.vy)
+LOG_ADD(LOG_INT16, vz, &stateCompressed.vz)
+
+LOG_ADD(LOG_UINT32, quat, &stateCompressed.quat)           // compressed quaternion, see quatcompress.h
+LOG_GROUP_STOP(viconZ)
+
 
 #ifdef MEASURE_PACKET_DROPS
 LOG_GROUP_START(pacDrop)

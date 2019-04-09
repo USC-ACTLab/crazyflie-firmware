@@ -123,6 +123,8 @@ struct traj_eval
 	struct vec acc;
 	struct vec omega;
 	float yaw;
+	float roll;
+	float pitch;
 };
 
 // a special value of traj_eval that indicates an invalid result.
