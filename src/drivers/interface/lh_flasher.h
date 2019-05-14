@@ -5,9 +5,9 @@
  * +------+    / /_/ / / /_/ /__/ /  / /_/ / / /_/  __/
  *  ||  ||    /_____/_/\__/\___/_/   \__,_/ /___/\___/
  *
- * Crazyflie control firmware
+ * Crazyflie Firmware
  *
- * Copyright (C) 2018 Bitcraze AB
+ * Copyright (C) Bitcraze AB
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,21 +21,24 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  *
- * Utilities to simplify unit testing
+ * @file lh_flasher.h
+ * Driver for programming the lighthouse deck SPI flash mem.
  *
  */
+#ifndef LH_FLASHER_H
+#define LH_FLASHER_H
 
-#pragma once
+#include <stdbool.h>
 
-// Include "arm_math.h". This header generates some warnings, especially in
-// unit tests. We hide them to avoid noise.
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wpedantic"
-#pragma GCC diagnostic ignored "-Wpointer-to-int-cast"
-#pragma GCC diagnostic ignored "-Wint-to-pointer-cast"
-#pragma GCC diagnostic ignored "-Wunused-parameter"
-#include "arm_math.h"
-#pragma GCC diagnostic pop
+/**
+ * Initialize the lighthouse flasher
+ * @param i2cPort  I2C port (a CPAL_InitTypeDef) the lighthouse is connected to.
+ *
+ * @return True on success, else false.
+ */
+bool lhflashInit();
 
-#define DEG_TO_RAD (PI/180.0f)
-#define RAD_TO_DEG (180.0f/PI)
+bool lhflashFlashBootloader();
+
+
+#endif // LH_FLASHER_H
