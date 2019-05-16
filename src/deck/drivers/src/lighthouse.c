@@ -57,7 +57,7 @@
 #endif
 
 #ifndef DISABLE_LIGHTHOUSE_DRIVER
-  // #define DISABLE_LIGHTHOUSE_DRIVER 1
+  #define DISABLE_LIGHTHOUSE_DRIVER 1
 #endif
 
 baseStationGeometry_t lighthouseBaseStationsGeometry[2]  = {
@@ -65,8 +65,14 @@ baseStationGeometry_t lighthouseBaseStationsGeometry[2]  = {
 {.origin = {2.563488, 3.112367, -1.062398, }, .mat = {{0.034269, -0.647552, 0.761251, }, {-0.012392, 0.761364, 0.648206, }, {-0.999336, -0.031647, 0.018067, }, }},
 };
 
+// Uncomment if you want to force the Crazyflie to reflash the deck at each startup
+// #define FORCE_FLASH true
 
 #if DISABLE_LIGHTHOUSE_DRIVER == 0
+
+#ifndef FORCE_FLASH
+#define FORCE_FLASH false
+#endif
 
 #define STR2(x) #x
 #define STR(x) STR2(x)
@@ -281,7 +287,7 @@ static void checkVersionAndBoot()
   lhblFlashWakeup();
   vTaskDelay(M2T(1));
 
-  // Checking if first and last 64 bytes of bitstream are identical
+  // Checking the bitstreams are identical
   // Also decoding bitstream version for console
   static char deckBitstream[65];
   lhblFlashRead(LH_FW_ADDR, 64, (uint8_t*)deckBitstream);
@@ -290,18 +296,17 @@ static void checkVersionAndBoot()
   int embeddedVersion = strtol((char*)&bitstream[2], NULL, 10);
 
   bool identical = true;
-  if (memcmp(deckBitstream, bitstream, 64)) {
-    DEBUG_PRINT("Fail comparing begining\n");
-    identical = false;
+  for (int i=0; i<=bitstreamSize; i+=64) {
+    int length = ((i+64)<bitstreamSize)?64:bitstreamSize-i;
+    lhblFlashRead(LH_FW_ADDR + i, length, (uint8_t*)deckBitstream);
+    if (memcmp(deckBitstream, &bitstream[i], length)) {
+      DEBUG_PRINT("Fail comparing firmware\n");
+      identical = false;
+      break;
+    }
   }
 
-  lhblFlashRead(LH_FW_ADDR + (bitstreamSize - 64), 64, (uint8_t*)deckBitstream);
-  if (memcmp(deckBitstream, &bitstream[(bitstreamSize - 64)], 64)) {
-    DEBUG_PRINT("Fail comparing end\n");
-    identical = false;
-  }
-
-  if (identical == false) {
+  if (identical == false || FORCE_FLASH) {
     DEBUG_PRINT("Deck has version %d and we embeed version %d\n", deckVersion, embeddedVersion);
     DEBUG_PRINT("Updating deck with embedded version!\n");
 
