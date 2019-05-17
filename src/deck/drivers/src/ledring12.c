@@ -706,8 +706,8 @@ static void packetRate(uint8_t buffer[][3], bool reset)
   static int tic = 0;
   static bool batteryEverLow = false;
 
-  varid = logGetVarId("vicon", "dt");
-  time_since_last_vicon_update = logGetUint(varid);
+  varid = logGetVarId("locSrv", "time");
+  time_since_last_vicon_update = xTaskGetTickCount() - logGetUint(varid);
   if (time_since_last_vicon_update > 30) time_since_last_vicon_update = 30;
 
   pmstateid = logGetVarId("pm", "state");

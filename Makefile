@@ -164,7 +164,6 @@ PROJ_OBJ += estimator_kalman.o kalman_core.o
 PROJ_OBJ += crtp_commander_high_level.o planner.o pptraj.o
 
 # Crazyswarm
-PROJ_OBJ += position_external.o
 PROJ_OBJ += estimator_kalmanUSC.o ekf.o
 
 # Deck Core

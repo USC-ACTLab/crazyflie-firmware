@@ -5,9 +5,11 @@
  *
  */
 
+#include "FreeRTOS.h"
+#include "task.h"
+
 #include "ekf.h"
 // #include "mathconstants.h"
-#include "position_external.h"
 #include "stabilizer_types.h"
 #include "sensors.h"
 #include "param.h"
@@ -31,8 +33,12 @@ static void ekf_flip()
 	ekf_back = ekf_temp;
 }
 static bool initialized = false;
-static bool rstWithExtPos = true;
+static bool resetEstimation = false;
+static bool useFakeVel = true; // estimate velocity from the mocap and fuse it in the filter
+static struct vec initialPos;
 
+static struct vec lastPos;
+static uint64_t lastTime;
 
 // TODO change EKF funcs to take struct vec,
 // then make a function that wraps positionExternalBringupGetLastData
@@ -52,6 +58,7 @@ static xQueueHandle measurementsQueue;
 enum measurementType_e
 {
 	measurementPosition,
+	measurementPose,
 };
 
 struct measurement
@@ -59,8 +66,25 @@ struct measurement
 	enum measurementType_e type;
 	union {
 		positionMeasurement_t position;
+		poseMeasurement_t pose;
 	};
 };
+
+static struct vec estimateVelocity(struct vec pos)
+{
+	struct vec result;
+	if (lastTime != 0)
+	{
+		float dt = (xTaskGetTickCount() - lastTime) / 1000.0f;
+		dt = fmax(dt, 0.005);
+		result = vdiv(vsub(pos, lastPos), dt);
+	} else {
+		result = vzero();
+	}
+	lastPos = pos;
+	lastTime = xTaskGetTickCount();
+	return result;
+}
 
 // public functions
 
@@ -69,7 +93,6 @@ void estimatorKalmanUSCInit(void)
 	// Initialize to 0 so gyro integration still works without Vicon
 	float init[] = {0, 0, 0, 1};
 	ekf_init(ekf_back, init, init, init);
-	
 
 	measurementsQueue = xQueueCreate(MEASUREMENTS_QUEUE_LENGTH, sizeof(struct measurement));
 
@@ -93,23 +116,11 @@ void estimatorKalmanUSC(state_t *state, sensorData_t *sensors, control_t *contro
 	if (!RATE_DO_EXECUTE(ATTITUDE_UPDATE_RATE, tick)) {
 		return;
 	}
-	// TODO: should we rate-limit IMU but not vicon, so we have less vicon latency?
 
-	// lazy initialization
-	if (rstWithExtPos && positionExternalFresh) {
-		float pos[3];
-		float vel[3];
-		float quat[4];
-		uint16_t last_time_in_ms;
-
-		positionExternalGetLastData(&pos[0], &pos[1], &pos[2],
-			&quat[0], &quat[1], &quat[2], &quat[3],
-			&vel[0], &vel[1], &vel[2],
-			&last_time_in_ms);
-
-		ekf_init(ekf_back, pos, vel, quat);
-		rstWithExtPos = false;
-		positionExternalFresh = false;
+	if (resetEstimation) {
+		float init[] = {0, 0, 0, 1};
+		ekf_init(ekf_back, &initialPos.x, init, init);
+		resetEstimation = false;
 	}
 
 	float acc[3] = {sensors->acc.x * GRAV, sensors->acc.y * GRAV, sensors->acc.z * GRAV};
@@ -117,31 +128,21 @@ void estimatorKalmanUSC(state_t *state, sensorData_t *sensors, control_t *contro
 	ekf_imu(ekf_back, ekf_front, acc, gyro, ATTITUDE_UPDATE_DT);
 	ekf_flip();
 
-	// check if new vicon data available
-	if (positionExternalFresh) {
-		float pos[3];
-		float vel[3];
-		float quat[4];
-		uint16_t last_time_in_ms;
-
-		positionExternalGetLastData(&pos[0], &pos[1], &pos[2],
-			&quat[0], &quat[1], &quat[2], &quat[3],
-			&vel[0], &vel[1], &vel[2],
-			&last_time_in_ms);
-
-		ekf_pose_and_vel(ekf_back, ekf_front, pos, vel, quat);
-		ekf_flip();
-
-		positionExternalFresh = false;
-	} else {
-		positionExternalUpdateDt();
-	}
-
 	struct measurement m;
 	while (pdTRUE == xQueueReceive(measurementsQueue, &m, 0)) {
 		switch(m.type) {
 			case measurementPosition:
 				ekf_position(ekf_back, ekf_front, m.position.pos);
+				break;
+			case measurementPose:
+				{
+					if (useFakeVel) {
+						struct vec v = estimateVelocity(vloadf(m.pose.pos));
+						ekf_pose_and_vel(ekf_back, ekf_front, m.pose.pos, &v.x, &m.pose.quat.x);
+					} else {
+						ekf_pose(ekf_back, ekf_front, m.pose.pos, &m.pose.quat.x);
+					}
+				}
 				break;
 		}
 		ekf_flip();
@@ -193,6 +194,19 @@ bool estimatorKalmanUSCEnqueuePosition(const positionMeasurement_t *pos)
 	return stateEstimatorUSCEnqueueExternalMeasurement((void *)&m);
 }
 
+bool estimatorKalmanUSCEnqueuePose(const poseMeasurement_t *pose)
+{
+	struct measurement m = {
+		.type = measurementPose,
+		.pose = *pose
+	};
+	return stateEstimatorUSCEnqueueExternalMeasurement((void *)&m);
+}
+
 PARAM_GROUP_START(kalmanUSC)
-  PARAM_ADD(PARAM_UINT8, rstWithExtPos, &rstWithExtPos)
+  PARAM_ADD(PARAM_UINT8, useFakeVel, &useFakeVel)
+  PARAM_ADD(PARAM_UINT8, resetEstimation, &resetEstimation)
+  PARAM_ADD(PARAM_FLOAT, initialX, &initialPos.x)
+  PARAM_ADD(PARAM_FLOAT, initialY, &initialPos.y)
+  PARAM_ADD(PARAM_FLOAT, initialZ, &initialPos.z)
 PARAM_GROUP_STOP(kalmanUSC)
