@@ -120,6 +120,9 @@ void estimatorKalmanUSC(state_t *state, sensorData_t *sensors, control_t *contro
 	if (resetEstimation) {
 		float init[] = {0, 0, 0, 1};
 		ekf_init(ekf_back, &initialPos.x, init, init);
+		lastTime = 0;
+		lastPos = vzero();
+		xQueueReset(measurementsQueue);
 		resetEstimation = false;
 	}
 
@@ -132,7 +135,12 @@ void estimatorKalmanUSC(state_t *state, sensorData_t *sensors, control_t *contro
 	while (pdTRUE == xQueueReceive(measurementsQueue, &m, 0)) {
 		switch(m.type) {
 			case measurementPosition:
-				ekf_position(ekf_back, ekf_front, m.position.pos);
+				if (useFakeVel) {
+					struct vec v = estimateVelocity(vloadf(m.position.pos));
+					ekf_position_and_vel(ekf_back, ekf_front, m.position.pos, &v.x);
+				} else {
+					ekf_position(ekf_back, ekf_front, m.position.pos);
+				}
 				break;
 			case measurementPose:
 				{

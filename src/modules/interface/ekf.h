@@ -47,3 +47,5 @@ void ekf_pose_and_vel(struct ekf const *old, struct ekf *new, float const pos_me
 void ekf_pose(struct ekf const *old, struct ekf *new, float const pos_measured[3], float const quat_measured[4]);
 
 void ekf_position(struct ekf const *old, struct ekf *new, float const pos_measured[3]);
+
+void ekf_position_and_vel(struct ekf const *old, struct ekf *new, float const pos_measured[3], float const vel_measured[3]);
