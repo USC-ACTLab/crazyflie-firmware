@@ -125,6 +125,18 @@ static struct {
   int32_t quat;
 } setpointCompressed;
 
+static float accVarX[NBR_OF_MOTORS];
+static float accVarY[NBR_OF_MOTORS];
+static float accVarZ[NBR_OF_MOTORS];
+// Bit field indicating if the motors passed the motor test.
+// Bit 0 - 1 = M1 passed
+// Bit 1 - 1 = M2 passed
+// Bit 2 - 1 = M3 passed
+// Bit 3 - 1 = M4 passed
+static uint8_t motorPass = 0;
+static uint16_t motorTestCount = 0;
+
+
 static void stabilizerTask(void* param);
 static void testProps(sensorData_t *sensors);
 
@@ -144,9 +156,9 @@ static void compressState()
   stateCompressed.vy = state.velocity.y * 1000.0f;
   stateCompressed.vz = state.velocity.z * 1000.0f;
 
-  stateCompressed.ax = state.acc.x * 1000.0f;
-  stateCompressed.ay = state.acc.y * 1000.0f;
-  stateCompressed.az = state.acc.z * 1000.0f;
+  stateCompressed.ax = state.acc.x * 9.81f * 1000.0f;
+  stateCompressed.ay = state.acc.y * 9.81f * 1000.0f;
+  stateCompressed.az = (state.acc.z + 1) * 9.81f * 1000.0f;
 
   float const q[4] = {
     state.attitudeQuaternion.x,
@@ -371,9 +383,12 @@ static bool evaluateTest(float low, float high, float value, uint8_t motor)
   if (value < low || value > high)
   {
     DEBUG_PRINT("Propeller test on M%d [FAIL]. low: %0.2f, high: %0.2f, measured: %0.2f\n",
-                motor, (double)low, (double)high, (double)value);
+                motor + 1, (double)low, (double)high, (double)value);
     return false;
   }
+
+  motorPass |= (1 << motor);
+
   return true;
 }
 
@@ -384,21 +399,18 @@ static void testProps(sensorData_t *sensors)
   static float accX[PROPTEST_NBR_OF_VARIANCE_VALUES];
   static float accY[PROPTEST_NBR_OF_VARIANCE_VALUES];
   static float accZ[PROPTEST_NBR_OF_VARIANCE_VALUES];
-  static float accVarX[NBR_OF_MOTORS];
-  static float accVarY[NBR_OF_MOTORS];
-  static float accVarZ[NBR_OF_MOTORS];
   static float accVarXnf;
   static float accVarYnf;
   static float accVarZnf;
   static int motorToTest = 0;
   static uint8_t nrFailedTests = 0;
-
   static float idleVoltage;
   static float minSingleLoadedVoltage[NBR_OF_MOTORS];
   static float minLoadedVoltage;
 
   if (testState == configureAcc)
   {
+    motorPass = 0;
     sensorsSetAccMode(ACC_MODE_PROPTEST);
     testState = measureNoiseFloor;
     minLoadedVoltage = idleVoltage = pmGetBatteryVoltage();
@@ -522,7 +534,7 @@ static void testProps(sensorData_t *sensors)
   {
     for (int m = 0; m < NBR_OF_MOTORS; m++)
     {
-      if (!evaluateTest(0, PROPELLER_BALANCE_TEST_THRESHOLD,  accVarX[m] + accVarY[m], m + 1))
+      if (!evaluateTest(0, PROPELLER_BALANCE_TEST_THRESHOLD,  accVarX[m] + accVarY[m], m))
       {
         nrFailedTests++;
         for (int j = 0; j < 3; j++)
@@ -546,6 +558,7 @@ static void testProps(sensorData_t *sensors)
       }
     }
 #endif
+    motorTestCount++;
     testState = testDone;
   }
 }
@@ -558,6 +571,19 @@ PARAM_GROUP_START(stabilizer)
 PARAM_ADD(PARAM_UINT8, estimator, &estimatorType)
 PARAM_ADD(PARAM_UINT8, controller, &controllerType)
 PARAM_GROUP_STOP(stabilizer)
+
+LOG_GROUP_START(health)
+LOG_ADD(LOG_FLOAT, motorVarXM1, &accVarX[0])
+LOG_ADD(LOG_FLOAT, motorVarYM1, &accVarY[0])
+LOG_ADD(LOG_FLOAT, motorVarXM2, &accVarX[1])
+LOG_ADD(LOG_FLOAT, motorVarYM2, &accVarY[1])
+LOG_ADD(LOG_FLOAT, motorVarXM3, &accVarX[2])
+LOG_ADD(LOG_FLOAT, motorVarYM3, &accVarY[2])
+LOG_ADD(LOG_FLOAT, motorVarXM4, &accVarX[3])
+LOG_ADD(LOG_FLOAT, motorVarYM4, &accVarY[3])
+LOG_ADD(LOG_UINT8, motorPass, &motorPass)
+LOG_ADD(LOG_UINT16, motorTestCount, &motorTestCount)
+LOG_GROUP_STOP(health)
 
 LOG_GROUP_START(ctrltarget)
 LOG_ADD(LOG_FLOAT, x, &setpoint.position.x)

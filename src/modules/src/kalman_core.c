@@ -63,6 +63,7 @@
 
 #include "log.h"
 #include "param.h"
+#include "math3d.h"
 
 // #define DEBUG_STATE_CHECK
 
@@ -155,6 +156,16 @@ static float initialX = 0.0;
 static float initialY = 0.0;
 static float initialZ = 0.0;
 
+// Initial yaw of the Crazyflie in radians.
+// 0 --- facing positive X
+// PI / 2 --- facing positive Y
+// PI --- facing negative X
+// 3 * PI / 2 --- facing negative Y
+static float initialYaw = 0.0;
+
+// Quaternion used for initial yaw
+static float initialQuaternion[4] = {0.0, 0.0, 0.0, 0.0};
+
 static uint32_t tdoaCount;
 
 
@@ -175,7 +186,11 @@ void kalmanCoreInit(kalmanCoreData_t* this) {
 //  this->S[KC_STATE_D2] = 0;
 
   // reset the attitude quaternion
-  this->q[0] = 1; // this->q[1] = 0; this->q[2] = 0; this->q[3] = 0;
+  initialQuaternion[0] = arm_cos_f32(initialYaw / 2);
+  initialQuaternion[1] = 0.0;
+  initialQuaternion[2] = 0.0;
+  initialQuaternion[3] = arm_sin_f32(initialYaw / 2);
+  for (int i = 0; i < 4; i++) { this->q[i] = initialQuaternion[i]; }
 
   // then set the initial rotation matrix to the identity. This only affects
   // the first prediction step, since in the finalization, after shifting
@@ -311,6 +326,41 @@ void kalmanCoreUpdateWithPosition(kalmanCoreData_t* this, positionMeasurement_t 
     arm_matrix_instance_f32 H = {1, KC_STATE_DIM, h};
     h[KC_STATE_X+i] = 1;
     scalarUpdate(this, &H, xyz->pos[i] - this->S[KC_STATE_X+i], xyz->stdDev);
+  }
+}
+
+void kalmanCoreUpdateWithPose(kalmanCoreData_t* this, poseMeasurement_t *pose)
+{
+  // a direct measurement of states x, y, and z, and orientation
+  // do a scalar update for each state, since this should be faster than updating all together
+  for (int i=0; i<3; i++) {
+    float h[KC_STATE_DIM] = {0};
+    arm_matrix_instance_f32 H = {1, KC_STATE_DIM, h};
+    h[KC_STATE_X+i] = 1;
+    scalarUpdate(this, &H, pose->pos[i] - this->S[KC_STATE_X+i], pose->stdDevPos);
+  }
+
+  // compute orientation error
+  struct quat const q_ekf = mkquat(this->q[1], this->q[2], this->q[3], this->q[0]);
+  struct quat const q_measured = mkquat(pose->quat.x, pose->quat.y, pose->quat.z, pose->quat.w);
+  struct quat const q_residual = qqmul(qinv(q_ekf), q_measured);
+  // small angle approximation, see eq. 141 in http://mars.cs.umn.edu/tr/reports/Trawny05b.pdf
+  struct vec const err_quat = vscl(2.0f / q_residual.w, quatimagpart(q_residual));
+
+  // do a scalar update for each state
+  {
+    float h[KC_STATE_DIM] = {0};
+    arm_matrix_instance_f32 H = {1, KC_STATE_DIM, h};
+    h[KC_STATE_D0] = 1;
+    scalarUpdate(this, &H, err_quat.x, pose->stdDevQuat);
+    h[KC_STATE_D0] = 0;
+
+    h[KC_STATE_D1] = 1;
+    scalarUpdate(this, &H, err_quat.y, pose->stdDevQuat);
+    h[KC_STATE_D1] = 0;
+
+    h[KC_STATE_D2] = 1;
+    scalarUpdate(this, &H, err_quat.z, pose->stdDevQuat);
   }
 }
 
@@ -730,20 +780,20 @@ void kalmanCorePredict(kalmanCoreData_t* this, float cmdThrust, Axis3f *acc, Axi
   float tmpq2;
   float tmpq3;
 
-  if (quadIsFlying) {
-    // rotate the quad's attitude by the delta quaternion vector computed above
-    tmpq0 = (dq[0]*this->q[0] - dq[1]*this->q[1] - dq[2]*this->q[2] - dq[3]*this->q[3]);
-    tmpq1 = (1.0f)*(dq[1]*this->q[0] + dq[0]*this->q[1] + dq[3]*this->q[2] - dq[2]*this->q[3]);
-    tmpq2 = (1.0f)*(dq[2]*this->q[0] - dq[3]*this->q[1] + dq[0]*this->q[2] + dq[1]*this->q[3]);
-    tmpq3 = (1.0f)*(dq[3]*this->q[0] + dq[2]*this->q[1] - dq[1]*this->q[2] + dq[0]*this->q[3]);
-  } else {
-    // rotate the quad's attitude by the delta quaternion vector computed above
-    tmpq0 = (dq[0]*this->q[0] - dq[1]*this->q[1] - dq[2]*this->q[2] - dq[3]*this->q[3]);
-    tmpq1 = (1.0f-ROLLPITCH_ZERO_REVERSION)*(dq[1]*this->q[0] + dq[0]*this->q[1] + dq[3]*this->q[2] - dq[2]*this->q[3]);
-    tmpq2 = (1.0f-ROLLPITCH_ZERO_REVERSION)*(dq[2]*this->q[0] - dq[3]*this->q[1] + dq[0]*this->q[2] + dq[1]*this->q[3]);
-    tmpq3 = (1.0f-ROLLPITCH_ZERO_REVERSION)*(dq[3]*this->q[0] + dq[2]*this->q[1] - dq[1]*this->q[2] + dq[0]*this->q[3]);
-  }
+  // rotate the quad's attitude by the delta quaternion vector computed above
+  tmpq0 = dq[0]*this->q[0] - dq[1]*this->q[1] - dq[2]*this->q[2] - dq[3]*this->q[3];
+  tmpq1 = dq[1]*this->q[0] + dq[0]*this->q[1] + dq[3]*this->q[2] - dq[2]*this->q[3];
+  tmpq2 = dq[2]*this->q[0] - dq[3]*this->q[1] + dq[0]*this->q[2] + dq[1]*this->q[3];
+  tmpq3 = dq[3]*this->q[0] + dq[2]*this->q[1] - dq[1]*this->q[2] + dq[0]*this->q[3];
 
+  if (! quadIsFlying) {
+    float keep = 1.0f - ROLLPITCH_ZERO_REVERSION;
+
+    tmpq0 = keep * tmpq0 + ROLLPITCH_ZERO_REVERSION * initialQuaternion[0];
+    tmpq1 = keep * tmpq1 + ROLLPITCH_ZERO_REVERSION * initialQuaternion[1];
+    tmpq2 = keep * tmpq2 + ROLLPITCH_ZERO_REVERSION * initialQuaternion[2];
+    tmpq3 = keep * tmpq3 + ROLLPITCH_ZERO_REVERSION * initialQuaternion[3];
+  }
 
   // normalize and store the result
   float norm = arm_sqrt(tmpq0*tmpq0 + tmpq1*tmpq1 + tmpq2*tmpq2 + tmpq3*tmpq3);
@@ -1008,4 +1058,5 @@ PARAM_GROUP_START(kalman)
   PARAM_ADD(PARAM_FLOAT, initialX, &initialX)
   PARAM_ADD(PARAM_FLOAT, initialY, &initialY)
   PARAM_ADD(PARAM_FLOAT, initialZ, &initialZ)
+  PARAM_ADD(PARAM_FLOAT, initialYaw, &initialYaw)
 PARAM_GROUP_STOP(kalman)
