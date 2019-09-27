@@ -102,11 +102,9 @@ static struct {
   // compressed quaternion, see quatcompress.h
   int32_t quat;
 
-  // lower 16 bit of timestamp (in ms)
-  uint16_t time;
+  // lower 16 bit of timestamp (in ms/ticks)
+  uint16_t tickOfLastPacket;
 } stateCompressed;
-
-static uint32_t time;
 
 static void locSrvCrtpCB(CRTPPacket* pk);
 static void extPositionHandler(CRTPPacket* pk);
@@ -158,8 +156,7 @@ static void extPositionHandler(CRTPPacket* pk)
   stateCompressed.y = ext_pos.y * 1000.0f;
   stateCompressed.z = ext_pos.z * 1000.0f;
   stateCompressed.quat = 0;
-  time = xTaskGetTickCount();
-  stateCompressed.time = time;
+  stateCompressed.tickOfLastPacket = xTaskGetTickCount();
 }
 
 static void genericLocHandle(CRTPPacket* pk)
@@ -201,8 +198,7 @@ static void genericLocHandle(CRTPPacket* pk)
       ext_pose.quat.z,
       ext_pose.quat.w};
     stateCompressed.quat = quatcompress(q);
-    time = xTaskGetTickCount();
-    stateCompressed.time = time;
+    stateCompressed.tickOfLastPacket = xTaskGetTickCount();
   } else if (type == EXT_POSE_PACKED) {
     uint8_t numItems = (pk->size - 1) / sizeof(extPosePackedItem);
     for (uint8_t i = 0; i < numItems; ++i) {
@@ -220,8 +216,7 @@ static void genericLocHandle(CRTPPacket* pk)
         stateCompressed.y = item->y;
         stateCompressed.z = item->z;
         stateCompressed.quat = item->quat;
-        time = xTaskGetTickCount();
-        stateCompressed.time = time;
+        stateCompressed.tickOfLastPacket = xTaskGetTickCount();
         break;
       }
     }
@@ -244,9 +239,7 @@ static void extPositionPackedHandler(CRTPPacket* pk)
       stateCompressed.y = item->y;
       stateCompressed.z = item->z;
       stateCompressed.quat = 0;
-      time = xTaskGetTickCount();
-      stateCompressed.time = time;
-
+      stateCompressed.tickOfLastPacket = xTaskGetTickCount();
       break;
     }
   }
@@ -294,9 +287,6 @@ LOG_GROUP_START(ext_pos)
   LOG_ADD(LOG_FLOAT, Z, &ext_pos.z)
 LOG_GROUP_STOP(ext_pos)
 
-LOG_GROUP_START(locSrv)
-  LOG_ADD(LOG_UINT32, time, &time)           // time when data was received (ms)
-LOG_GROUP_STOP(locSrv)
 
 LOG_GROUP_START(locSrvZ)
   LOG_ADD(LOG_INT16, x, &stateCompressed.x)                 // position - mm
@@ -305,7 +295,7 @@ LOG_GROUP_START(locSrvZ)
 
   LOG_ADD(LOG_UINT32, quat, &stateCompressed.quat)           // compressed quaternion, see quatcompress.h
 
-  LOG_ADD(LOG_UINT16, time, &stateCompressed.time)           // time when data was received (ms)
+  LOG_ADD(LOG_UINT16, tick, &stateCompressed.tickOfLastPacket)  // time when data was received last (ms/ticks)
 LOG_GROUP_STOP(locSrvZ)
 
 PARAM_GROUP_START(locSrv)

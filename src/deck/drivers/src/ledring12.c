@@ -707,40 +707,51 @@ static void rssiEffect(uint8_t buffer[][3], bool reset)
   }
 }
 
-static void packetRate(uint8_t buffer[][3], bool reset)
+/**
+ * An effect that shows the status of the location service.
+ *
+ * Red means bad, green means good.
+ * Blinking means battery was low during flight.
+ */
+static void locSrvStatus(uint8_t buffer[][3], bool reset)
 {
-  int i;
-  static int varid;
-  uint32_t time_since_last_vicon_update; //ms
-  static int pmstateid;
-  int8_t pmstate;
+  static int locSrvTickId = -1;
+  static int pmStateId = -1;
+
   static int tic = 0;
   static bool batteryEverLow = false;
 
-  varid = logGetVarId("locSrv", "time");
-  time_since_last_vicon_update = xTaskGetTickCount() - logGetUint(varid);
-  if (time_since_last_vicon_update > 30) time_since_last_vicon_update = 30;
+  // lazy initialization of the logging variables
+  if (locSrvTickId == -1) {
+    locSrvTickId = logGetVarId("locSrvZ", "tick");
+    pmStateId = logGetVarId("pm", "state");
+  }
 
-  pmstateid = logGetVarId("pm", "state");
-  pmstate = logGetInt(pmstateid);
+  // compute time since the last update in milliseconds
+  uint16_t time_since_last_update = xTaskGetTickCount() - logGetUint(locSrvTickId);
+  if (time_since_last_update > 30) {
+    time_since_last_update = 30;
+  }
+
+  int8_t pmstate = logGetInt(pmStateId);
   if (pmstate == lowPower) {
     batteryEverLow = true;
   }
 
-  for (i = 0; i < NBR_LEDS; i++) {
+  for (int i = 0; i < NBR_LEDS; i++) {
     if (batteryEverLow && tic < 10) {
       buffer[i][0] = 0;
       buffer[i][1] = 0;
-      buffer[i][2] = 0;
     } else {
-      buffer[i][0] = LIMIT(LINSCALE(0, 30, 0, 100, time_since_last_vicon_update)); // Red (long time_since_last_vicon_update)
-      buffer[i][1] = LIMIT(LINSCALE(0, 30, 100, 0, time_since_last_vicon_update)); // Green (short time_since_last_vicon_update)
-
-      buffer[i][2] = 0;
+      buffer[i][0] = LIMIT(LINSCALE(0, 30, 0, 100, time_since_last_update)); // Red (large time_since_last_update)
+      buffer[i][1] = LIMIT(LINSCALE(0, 30, 100, 0, time_since_last_update)); // Green (small time_since_last_update)
     }
+    buffer[i][2] = 0;
   }
 
-  if (++tic >= 20) tic = 0;
+  if (++tic >= 20) {
+    tic = 0;
+  }
 }
 
 /**************** Effect list ***************/
@@ -764,7 +775,7 @@ Ledring12Effect effectsFct[] =
   virtualMemEffect,
   fadeColorEffect,
   rssiEffect,
-  packetRate,
+  locSrvStatus,
 };
 
 /********** Ring init and switching **********/
