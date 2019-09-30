@@ -82,11 +82,7 @@ struct poly4d
 {
 	float p[4][PP_SIZE];
 	float duration; // TODO use int millis instead?
-}
-#ifndef SWIG
-__attribute__((packed))
-#endif
-;
+} __attribute__((packed));
 
 // construct a 4d zero polynomial.
 struct poly4d poly4d_zero(float duration);
