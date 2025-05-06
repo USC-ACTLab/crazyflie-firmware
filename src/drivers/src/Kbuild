@@ -1,5 +1,6 @@
 obj-y += ak8963.o
 obj-y += cppm.o
+obj-y += dlhr-l01d-e1bd.o
 obj-y += eeprom.o
 obj-y += exti.o
 obj-y += fatfs_sd.o

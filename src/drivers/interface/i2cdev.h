@@ -55,6 +55,7 @@ typedef I2cDrv    I2C_Dev;
 #define RANGER_DECKS_ADDRESS_START     0x60
 #define RANGER_DECKS_ADDRESS_END       0x6F
 #define ACS_DECK_I2C_ADDR              0x7F
+#define DOWN_WASH_DECK_I2C_ADDR        0x29
 
 
 
