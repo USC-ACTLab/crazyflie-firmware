@@ -5,8 +5,6 @@
  * +------+    / /_/ / / /_/ /__/ /  / /_/ / / /_/  __/
  *  ||  ||    /_____/_/\__/\___/_/   \__,_/ /___/\___/
  *
- * LPS node firmware.
- *
  * Copyright 2016, Bitcraze AB
  *
  * This program is free software: you can redistribute it and/or modify
@@ -44,8 +42,7 @@
 #include "physicalConstants.h"
 #include "configblock.h"
 #include "lpsTdma.h"
-
-#define ANTENNA_OFFSET 154.6   // In meter
+#include "static_mem.h"
 
 // Config
 static lpsTwrAlgoOptions_t defaultOptions = {
@@ -64,7 +61,7 @@ static lpsTwrAlgoOptions_t defaultOptions = {
      0xbccf000000000007,
  #endif
    },
-   .antennaDelay = (ANTENNA_OFFSET*499.2e6*128)/299792458.0, // In radio tick
+   .antennaDelay = LOCODECK_ANTENNA_DELAY,
    .rangingFailedThreshold = 6,
 
    .combinedAnchorPositionOk = false,
@@ -100,7 +97,7 @@ static lpsTwrAlgoOptions_t* options = &defaultOptions;
 // Outlier rejection
 #define RANGING_HISTORY_LENGTH 32
 #define OUTLIER_TH 4
-static struct {
+NO_DMA_CCM_SAFE_ZERO_INIT static struct {
   float32_t history[RANGING_HISTORY_LENGTH];
   size_t ptr;
 } rangingStats[LOCODECK_NR_OF_TWR_ANCHORS];
@@ -122,7 +119,7 @@ static dwTime_t final_rx;
 
 static packet_t txPacket;
 static volatile uint8_t curr_seq = 0;
-static int current_anchor = 0;
+static uint8_t current_anchor = 0;
 
 static bool ranging_complete = false;
 static bool lpp_transaction = false;
@@ -257,6 +254,7 @@ static uint32_t rxcallback(dwDevice_t *dev) {
         dist.x = options->anchorPosition[current_anchor].x;
         dist.y = options->anchorPosition[current_anchor].y;
         dist.z = options->anchorPosition[current_anchor].z;
+        dist.anchorId = current_anchor;
         dist.stdDev = 0.25;
         estimatorEnqueueDistance(&dist);
       }
@@ -455,7 +453,7 @@ static void updateTagTdmaSlot(lpsTwrAlgoOptions_t * options)
   if (options->tdmaSlot < 0) {
     uint64_t radioAddress = configblockGetRadioAddress();
     int nslot = 1;
-    for (int i=0; i<TDMA_NSLOTS_BITS; i++) {
+    for (int i=0; i<CONFIG_DECK_LOCO_TDMA_SLOTS; i++) {
       nslot *= 2;
     }
     options->tdmaSlot = radioAddress % nslot;
@@ -551,68 +549,138 @@ uwbAlgorithm_t uwbTwrTagAlgorithm = {
   .getActiveAnchorIdList = getActiveAnchorIdList,
 };
 
+/**
+ * Log group for Two Way Ranging data
+ */
 LOG_GROUP_START(twr)
+
+/**
+ * @brief Successful ranging ratio with anchor 0 [%]
+ */
 LOG_ADD(LOG_UINT8, rangingSuccessRate0, &rangingSuccessRate[0])
+
+/**
+ * @brief Ranging attempt rate with anchor 0 [1/s]
+ */
 LOG_ADD(LOG_UINT8, rangingPerSec0, &rangingPerSec[0])
+
+/**
+ * @brief Successful ranging ratio with anchor 1 [%]
+ */
 LOG_ADD(LOG_UINT8, rangingSuccessRate1, &rangingSuccessRate[1])
+
+/**
+ * @brief Ranging attempt rate with anchor 1 [1/s]
+ */
 LOG_ADD(LOG_UINT8, rangingPerSec1, &rangingPerSec[1])
+
+/**
+ * @brief Successful ranging ratio with anchor 2 [%]
+ */
 LOG_ADD(LOG_UINT8, rangingSuccessRate2, &rangingSuccessRate[2])
+
+/**
+ * @brief Ranging attempt rate with anchor 2 [1/s]
+ */
 LOG_ADD(LOG_UINT8, rangingPerSec2, &rangingPerSec[2])
+
+/**
+ * @brief Successful ranging ratio with anchor 3 [%]
+ */
 LOG_ADD(LOG_UINT8, rangingSuccessRate3, &rangingSuccessRate[3])
+
+/**
+ * @brief Ranging attempt rate with anchor 3 [1/s]
+ */
 LOG_ADD(LOG_UINT8, rangingPerSec3, &rangingPerSec[3])
+
+/**
+ * @brief Successful ranging ratio with anchor 4 [%]
+ */
 LOG_ADD(LOG_UINT8, rangingSuccessRate4, &rangingSuccessRate[4])
+
+/**
+ * @brief Ranging attempt rate with anchor 4 [1/s]
+ */
 LOG_ADD(LOG_UINT8, rangingPerSec4, &rangingPerSec[4])
+
+/**
+ * @brief Successful ranging ratio with anchor 5 [%]
+ */
 LOG_ADD(LOG_UINT8, rangingSuccessRate5, &rangingSuccessRate[5])
+
+/**
+ * @brief Ranging attempt rate with anchor 5 [1/s]
+ */
 LOG_ADD(LOG_UINT8, rangingPerSec5, &rangingPerSec[5])
 LOG_GROUP_STOP(twr)
 
+/**
+ * Log group for distances (ranges) to anchors aquired by Two Way Ranging (TWR)
+ */
 LOG_GROUP_START(ranging)
-#if (LOCODECK_NR_OF_TWR_ANCHORS > 0)
+/**
+ * @brief Distance to anchor 0 [m]
+ */
 LOG_ADD(LOG_FLOAT, distance0, &state.distance[0])
-#endif
-#if (LOCODECK_NR_OF_TWR_ANCHORS > 1)
+/**
+ * @brief Distance to anchor 1 [m]
+ */
 LOG_ADD(LOG_FLOAT, distance1, &state.distance[1])
-#endif
-#if (LOCODECK_NR_OF_TWR_ANCHORS > 2)
+/**
+ * @brief Distance to anchor 2 [m]
+ */
 LOG_ADD(LOG_FLOAT, distance2, &state.distance[2])
-#endif
-#if (LOCODECK_NR_OF_TWR_ANCHORS > 3)
+/**
+ * @brief Distance to anchor 3 [m]
+ */
 LOG_ADD(LOG_FLOAT, distance3, &state.distance[3])
-#endif
-#if (LOCODECK_NR_OF_TWR_ANCHORS > 4)
+/**
+ * @brief Distance to anchor 4 [m]
+ */
 LOG_ADD(LOG_FLOAT, distance4, &state.distance[4])
-#endif
-#if (LOCODECK_NR_OF_TWR_ANCHORS > 5)
+/**
+ * @brief Distance to anchor 5 [m]
+ */
 LOG_ADD(LOG_FLOAT, distance5, &state.distance[5])
-#endif
-#if (LOCODECK_NR_OF_TWR_ANCHORS > 6)
+/**
+ * @brief Distance to anchor 6 [m]
+ */
 LOG_ADD(LOG_FLOAT, distance6, &state.distance[6])
-#endif
-#if (LOCODECK_NR_OF_TWR_ANCHORS > 7)
+/**
+ * @brief Distance to anchor 7 [m]
+ */
 LOG_ADD(LOG_FLOAT, distance7, &state.distance[7])
-#endif
-#if (LOCODECK_NR_OF_TWR_ANCHORS > 0)
+/**
+ * @brief ASL of anchor 0 [m]
+ */
 LOG_ADD(LOG_FLOAT, pressure0, &state.pressures[0])
-#endif
-#if (LOCODECK_NR_OF_TWR_ANCHORS > 1)
+/**
+ * @brief ASL of anchor 1 [m]
+ */
 LOG_ADD(LOG_FLOAT, pressure1, &state.pressures[1])
-#endif
-#if (LOCODECK_NR_OF_TWR_ANCHORS > 2)
+/**
+ * @brief ASL of anchor 2 [m]
+ */
 LOG_ADD(LOG_FLOAT, pressure2, &state.pressures[2])
-#endif
-#if (LOCODECK_NR_OF_TWR_ANCHORS > 3)
+/**
+ * @brief ASL of anchor 3 [m]
+ */
 LOG_ADD(LOG_FLOAT, pressure3, &state.pressures[3])
-#endif
-#if (LOCODECK_NR_OF_TWR_ANCHORS > 4)
+/**
+ * @brief ASL of anchor 4 [m]
+ */
 LOG_ADD(LOG_FLOAT, pressure4, &state.pressures[4])
-#endif
-#if (LOCODECK_NR_OF_TWR_ANCHORS > 5)
+/**
+ * @brief ASL of anchor 5 [m]
+ */
 LOG_ADD(LOG_FLOAT, pressure5, &state.pressures[5])
-#endif
-#if (LOCODECK_NR_OF_TWR_ANCHORS > 6)
+/**
+ * @brief ASL of anchor 6 [m]
+ */
 LOG_ADD(LOG_FLOAT, pressure6, &state.pressures[6])
-#endif
-#if (LOCODECK_NR_OF_TWR_ANCHORS > 7)
+/**
+ * @brief ASL of anchor 7 [m]
+ */
 LOG_ADD(LOG_FLOAT, pressure7, &state.pressures[7])
-#endif
 LOG_GROUP_STOP(ranging)

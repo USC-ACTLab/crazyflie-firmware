@@ -5,9 +5,7 @@
  * +------+    / /_/ / / /_/ /__/ /  / /_/ / / /_/  __/
  *  ||  ||    /_____/_/\__/\___/_/   \__,_/ /___/\___/
  *
- * LPS node firmware.
- *
- * Copyright 2017, Bitcraze AB
+ * Copyright 2021, Bitcraze AB
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -93,13 +91,15 @@ static void oaInit()
 
   pca95x4Init();
 
-  pca95x4ConfigOutput(~(OA_PIN_UP |
+  pca95x4ConfigOutput(PCA95X4_DEFAULT_ADDRESS,
+                      ~(OA_PIN_UP |
                         OA_PIN_RIGHT |
                         OA_PIN_LEFT |
                         OA_PIN_FRONT |
                         OA_PIN_BACK));
 
-  pca95x4ClearOutput(OA_PIN_UP |
+  pca95x4ClearOutput(PCA95X4_DEFAULT_ADDRESS,
+                     OA_PIN_UP |
                      OA_PIN_RIGHT |
                      OA_PIN_LEFT |
                      OA_PIN_FRONT |
@@ -107,8 +107,8 @@ static void oaInit()
 
   isInit = true;
 
-  xTaskCreate(oaTask, "oa", 2*configMINIMAL_STACK_SIZE, NULL,
-              /*priority*/3, NULL);
+  xTaskCreate(oaTask, OA_DECK_TASK_NAME, OA_DECK_TASK_STACKSIZE, NULL,
+              OA_DECK_TASK_PRI, NULL);
 }
 
 static bool oaTest()
@@ -120,7 +120,7 @@ static bool oaTest()
     return false;
   }
 
-  pca95x4SetOutput(OA_PIN_FRONT);
+  pca95x4SetOutput(PCA95X4_DEFAULT_ADDRESS, OA_PIN_FRONT);
   if (vl53l0xInit(&devFront, I2C1_DEV, true)) {
     DEBUG_PRINT("Init front sensor [OK]\n");
   } else {
@@ -128,7 +128,7 @@ static bool oaTest()
     pass = false;
   }
 
-  pca95x4SetOutput(OA_PIN_BACK);
+  pca95x4SetOutput(PCA95X4_DEFAULT_ADDRESS, OA_PIN_BACK);
   if (vl53l0xInit(&devBack, I2C1_DEV, true)) {
     DEBUG_PRINT("Init back sensor [OK]\n");
   } else {
@@ -136,7 +136,7 @@ static bool oaTest()
     pass = false;
   }
 
-  pca95x4SetOutput(OA_PIN_UP);
+  pca95x4SetOutput(PCA95X4_DEFAULT_ADDRESS, OA_PIN_UP);
   if (vl53l0xInit(&devUp, I2C1_DEV, true)) {
     DEBUG_PRINT("Init up sensor [OK]\n");
   } else {
@@ -144,7 +144,7 @@ static bool oaTest()
     pass = false;
   }
 
-  pca95x4SetOutput(OA_PIN_LEFT);
+  pca95x4SetOutput(PCA95X4_DEFAULT_ADDRESS, OA_PIN_LEFT);
   if (vl53l0xInit(&devLeft, I2C1_DEV, true)) {
     DEBUG_PRINT("Init left sensor [OK]\n");
   } else {
@@ -152,7 +152,7 @@ static bool oaTest()
     pass = false;
   }
 
-  pca95x4SetOutput(OA_PIN_RIGHT);
+  pca95x4SetOutput(PCA95X4_DEFAULT_ADDRESS, OA_PIN_RIGHT);
   if (vl53l0xInit(&devRight, I2C1_DEV, true)) {
     DEBUG_PRINT("Init right sensor [OK]\n");
   } else {
@@ -170,7 +170,8 @@ static const DeckDriver oa_deck = {
   .pid = 0x0B,
   .name = "bcOA",
 
-  .usedGpio = 0,  // FIXME: set the used pins
+  .usedGpio = 0,
+  .usedPeriph = DECK_USING_I2C,
 
   .init = oaInit,
   .test = oaTest,

@@ -38,21 +38,40 @@ Header file for planning state machine
 
 #pragma once
 
+#include <stdint.h>
+
 #include "math3d.h"
 #include "pptraj.h"
+#include "pptraj_compressed.h"
 
 enum trajectory_state
 {
+	// Motors off.
 	TRAJECTORY_STATE_IDLE            = 0,
+	// Follow a trajectory, then hover at its endpoint.
 	TRAJECTORY_STATE_FLYING          = 1,
+	// Follow a trajectory, but cut motors when it ends.
 	TRAJECTORY_STATE_LANDING         = 3,
+	// Not producing setpoints but also not wanting motors off.
+	TRAJECTORY_STATE_DISABLED        = 4,
+};
+
+enum trajectory_type
+{
+	TRAJECTORY_TYPE_PIECEWISE            = 0,
+	TRAJECTORY_TYPE_PIECEWISE_COMPRESSED = 1
 };
 
 struct planner
 {
 	enum trajectory_state state;	// current state
+	enum trajectory_type type;      // current type
 	bool reversed;					// true, if trajectory should be evaluated in reverse
-	const struct piecewise_traj* trajectory; // pointer to trajectory
+
+	union {
+		const struct piecewise_traj* trajectory; // pointer to trajectory
+		struct piecewise_traj_compressed* compressed_trajectory; // pointer to compressed trajectory
+	};
 
 	struct piecewise_traj planned_trajectory; // trajectory for on-board planning
 	struct poly4d pieces[1]; // the on-board planner requires a single piece, only
@@ -68,20 +87,41 @@ void plan_stop(struct planner *p);
 
 // query if the planner is stopped.
 // currently this is true at startup before we take off,
-// and also after an emergency stop.
+// and also after a stop.
 bool plan_is_stopped(struct planner *p);
+
+// disable the planner.
+// subsequently, plan_is_disabled(p) will return true,
+// and it is no longer valid to call plan_current_goal(p).
+void plan_disable(struct planner *p);
+
+// query if the planner is disabled.
+// currently this is true when preempted by low-level commands.
+bool plan_is_disabled(struct planner *p);
 
 // get the planner's current goal.
 struct traj_eval plan_current_goal(struct planner *p, float t);
 
 // start a takeoff trajectory.
-int plan_takeoff(struct planner *p, struct vec pos, float yaw, float height, float duration, float t);
+int plan_takeoff(struct planner *p, struct vec curr_pos, float curr_yaw, float hover_height, float hover_yaw, float duration, float t);
 
 // start a landing trajectory.
-int plan_land(struct planner *p, struct vec pos, float yaw, float height, float duration, float t);
+int plan_land(struct planner *p, struct vec curr_pos, float curr_yaw, float hover_height, float hover_yaw, float duration, float t);
 
 // move to a given position, then hover there.
-int plan_go_to(struct planner *p, bool relative, struct vec hover_pos, float hover_yaw, float duration, float t);
+int plan_go_to(struct planner *p, bool relative, bool linear, struct vec hover_pos, float hover_yaw, float duration, float t);
 
-// start trajectory
-int plan_start_trajectory(struct planner *p, const struct piecewise_traj* trajectory, bool reversed);
+// same as above, but with current state provided from outside.
+int plan_go_to_from(struct planner *p, const struct traj_eval *curr_eval, bool relative, bool linear, struct vec hover_pos, float hover_yaw, float duration, float t);
+
+// move along a spiral
+int plan_spiral_from(struct planner *p, const struct traj_eval *curr_eval, bool sideways, bool clockwise, float spiral_angle, float radius0, float radiusf, float ascent, float duration, float t);
+
+// start trajectory. start_from param is ignored if relative == false.
+int plan_start_trajectory(struct planner *p, struct piecewise_traj* trajectory, bool reversed, bool relative, struct vec start_from);
+
+// start compressed trajectory. start_from param is ignored if relative == false.
+int plan_start_compressed_trajectory(struct planner *p, struct piecewise_traj_compressed* trajectory, bool relative, struct vec start_from);
+
+// Query if the trjectory is finished
+bool plan_is_finished(struct planner *p, float t);

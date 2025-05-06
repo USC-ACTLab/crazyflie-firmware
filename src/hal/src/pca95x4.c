@@ -36,12 +36,11 @@ static I2C_Dev *I2Cx;
 
 void pca95x4Init()
 {
-  i2cdevInit(I2C1_DEV);
   I2Cx = I2C1_DEV;
   devAddr = PCA95X4_DEFAULT_ADDRESS;
 }
 
-bool pca95x4Test()
+bool pca95x4Test(uint8_t devAddr)
 {
   uint8_t tb;
   bool pass;
@@ -52,14 +51,14 @@ bool pca95x4Test()
   return pass;
 }
 
-bool pca95x4ConfigOutput(uint32_t val) {
+bool pca95x4ConfigOutput(uint8_t devAddr, uint32_t val) {
   bool pass;
 
   pass = i2cdevWriteByte(I2Cx, devAddr, PCA95X4_CONFIG_REG, val);
   return pass;
 }
 
-bool pca95x4SetOutput(uint32_t mask) {
+bool pca95x4SetOutput(uint8_t devAddr, uint32_t mask) {
   uint8_t val;
   bool pass;
 
@@ -70,7 +69,7 @@ bool pca95x4SetOutput(uint32_t mask) {
   return pass;
 }
 
-bool pca95x4ClearOutput(uint32_t mask) {
+bool pca95x4ClearOutput(uint8_t devAddr, uint32_t mask) {
   uint8_t val;
   bool pass;
 

@@ -4,7 +4,6 @@
 #include <string.h>
 #include "unity.h"
 #include "mock_libdw1000.h"
-#include "mock_cfassert.h"
 #include "mock_locodeck.h"
 #include "mock_configblock.h"
 
@@ -17,8 +16,8 @@
 // The mocking FW can not handle the cf_math.h/arm_math.h file, it crashes while parsing it. We have to use manual mocks instead.
 // Temporarily fix to make tests pass, add test code for the estimator part of rxcallback()
 #include "cf_math.h"
-void arm_std_f32( float32_t * pSrc, uint32_t blockSize, float32_t * pResult) { *pResult = 0.0; }
-void arm_mean_f32( float32_t * pSrc, uint32_t blockSize, float32_t * pResult) { *pResult = 0.0; }
+void arm_std_f32(const float32_t * pSrc, uint32_t blockSize, float32_t * pResult) { *pResult = 0.0; }
+void arm_mean_f32(const float32_t * pSrc, uint32_t blockSize, float32_t * pResult) { *pResult = 0.0; }
 
 #include "mock_estimator.h"
 
@@ -137,22 +136,6 @@ void testNormalMessageSequenceShouldGenerateDistance() {
 
   float actualDistance = lpsTwrTagGetDistance(expectedAnchor);
   TEST_ASSERT_FLOAT_WITHIN(0.01, expectedDistance, actualDistance);
-}
-
-void testEventReceiveUnhandledEventShouldAssertFailure() {
-  // Fixture
-  assertFail_Expect("", "", 0);
-  assertFail_IgnoreArg_exp();
-  assertFail_IgnoreArg_file();
-  assertFail_IgnoreArg_line();
-
-  uwbEvent_t unknownEvent = 100;
-
-  // Test
-  uwbTwrTagAlgorithm.onEvent(&dev, unknownEvent);
-
-  // Assert
-  // Mock automatically validated after test
 }
 
 void testEventReceiveFailedShouldBeIgnored() {

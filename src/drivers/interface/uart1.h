@@ -53,10 +53,19 @@
 #define UART1_GPIO_AF_TX       GPIO_AF_USART3
 #define UART1_GPIO_AF_RX       GPIO_AF_USART3
 
+typedef enum {
+    uart1ParityNone, uart1ParityEven, uart1ParityOdd
+} uart1Parity_t;
+
 /**
- * Initialize the UART.
+ * Initialize the UART with parity None
  */
 void uart1Init(const uint32_t baudrate);
+
+/**
+ * Initialize the UART with custom parity
+ */
+void uart1InitWithParity(const uint32_t baudrate, const uart1Parity_t parity);
 
 /**
  * Test the UART status.
@@ -66,11 +75,44 @@ void uart1Init(const uint32_t baudrate);
 bool uart1Test(void);
 
 /**
+ * Read a byte of data from incoming queue with a timeout
+ * @param[out] c  Read byte
+ * @param[in] timeoutTicks The timeout in sys ticks
+ * @return true if data, false if timeout was reached.
+ */
+bool uart1GetDataWithTimeout(uint8_t *c, const uint32_t timeoutTicks);
+
+/**
  * Read a byte of data from incoming queue with a timeout defined by UART1_DATA_TIMEOUT_MS
  * @param[out] c  Read byte
  * @return true if data, false if timeout was reached.
  */
-bool uart1GetDataWithTimout(uint8_t *c);
+bool uart1GetDataWithDefaultTimeout(uint8_t *c);
+
+/**
+ * Get data from the UART connection. Blocking until the amount of
+ * data has been read
+ *
+ * @param[in] size  Number of bytes to read
+ * @param[out] data  Pointer to data
+ *
+ * @return number of bytes read
+ */
+void uart1GetBytesWithDefaultTimeout(uint32_t size, uint8_t* data);
+
+/**
+ * @brief Get the number of bytes available in the UART1 in queue
+ *
+ * @return uint32_t  Number of bytes available
+ */
+uint32_t uart1bytesAvailable();
+
+/**
+ * @brief Get the maximum number of bytes that can be stored in the UART1 in queue
+ *
+ * @return uint32_t  The maximum length of the in queue
+ */
+uint32_t uart1QueueMaxLength();
 
 /**
  * Sends raw data using a lock. Should be used from
@@ -101,7 +143,7 @@ void uart1Getchar(char * ch);
 /**
  * Returns true if an overrun condition has happened since initialization or
  * since the last call to this function.
- * 
+ *
  * @return true if an overrun condition has happened
  */
 bool uart1DidOverrun();

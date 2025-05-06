@@ -46,6 +46,18 @@ typedef I2cDrv    I2C_Dev;
 #define i2cdevWrite16 i2cdevWriteReg16
 #define i2cdevRead16  i2cdevReadReg16
 
+//I2cAddress list
+#define RANGER_DECKS_DEFAULT_ADDRESS   0x29
+#define ACTIVE_MARKER_DECK_I2C_ADDRESS 0x2E
+#define LIGHTHOUSE_DECK_I2C_ADDR       0x2F
+#define EEPROM_I2C_ADDR                0x50
+#define PRESSURE_DECK_I2C_ADDRESS      0x5D
+#define RANGER_DECKS_ADDRESS_START     0x60
+#define RANGER_DECKS_ADDRESS_END       0x6F
+#define ACS_DECK_I2C_ADDR              0x7F
+
+
+
 /**
  * Read bytes from an I2C peripheral
  * @param dev  Pointer to I2C peripheral to read from
@@ -138,7 +150,7 @@ bool i2cdevReadBits(I2C_Dev *dev, uint8_t devAddress, uint8_t memAddress,
  *
  * @return TRUE if write was successful, otherwise FALSE.
  */
-bool i2cdevWrite(I2C_Dev *dev, uint8_t devAddress, uint16_t len, uint8_t *data);
+bool i2cdevWrite(I2C_Dev *dev, uint8_t devAddress, uint16_t len, const uint8_t *data);
 
 /**
  * Write bytes to an I2C peripheral
@@ -151,7 +163,7 @@ bool i2cdevWrite(I2C_Dev *dev, uint8_t devAddress, uint16_t len, uint8_t *data);
  * @return TRUE if write was successful, otherwise FALSE.
  */
 bool i2cdevWriteReg8(I2C_Dev *dev, uint8_t devAddress, uint8_t memAddress,
-                 uint16_t len, uint8_t *data);
+                 uint16_t len, const uint8_t *data);
 
 /**
  * Write bytes to an I2C peripheral with 16bit internal reg/mem address.
@@ -164,7 +176,7 @@ bool i2cdevWriteReg8(I2C_Dev *dev, uint8_t devAddress, uint8_t memAddress,
  * @return TRUE if write was successful, otherwise FALSE.
  */
 bool i2cdevWriteReg16(I2C_Dev *dev, uint8_t devAddress, uint16_t memAddress,
-                   uint16_t len, uint8_t *data);
+                   uint16_t len, const uint8_t *data);
 
 /**
  * Write a byte to an I2C peripheral

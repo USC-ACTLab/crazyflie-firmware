@@ -1,13 +1,13 @@
 /**
- *    ||          ____  _ __                           
- * +------+      / __ )(_) /_______________ _____  ___ 
+ *    ||          ____  _ __
+ * +------+      / __ )(_) /_______________ _____  ___
  * | 0xBC |     / __  / / __/ ___/ ___/ __ `/_  / / _ \
  * +------+    / /_/ / / /_/ /__/ /  / /_/ / / /_/  __/
  *  ||  ||    /_____/_/\__/\___/_/   \__,_/ /___/\___/
  *
  * Crazyflie control firmware
  *
- * Copyright (C) 2011-2012 Bitcraze AB
+ * Copyright (C) 2011-2021 Bitcraze AB
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,22 +24,28 @@
  * param.h - Crazy parameter system header file.
  */
 
-#ifndef __PARAM_H__
-#define __PARAM_H__
+#pragma once
 
-#include <stdbool.h>
 #include <stdint.h>
 
-/* Public functions */
-void paramInit(void);
-bool paramTest(void);
+// Include param_logic.h for backwards compatibility in apps
+#include "param_logic.h"
 
 /* Basic parameter structure */
 struct param_s {
   uint8_t type;
+  uint8_t extended_type;
   char * name;
   void * address;
+  void (*callback)(void);
+  void * (*getter)(void);
 };
+
+typedef uint8_t * (*paramGetterUInt8)(void);
+typedef uint16_t * (*paramGetterUInt16)(void);
+typedef uint32_t * (*paramGetterUInt32)(void);
+typedef uint64_t * (*paramGetterUInt64)(void);
+typedef float * (*paramGetterFloat)(void);
 
 #define PARAM_BYTES_MASK 0x03
 #define PARAM_1BYTE  0x00
@@ -47,6 +53,7 @@ struct param_s {
 #define PARAM_4BYTES 0x02
 #define PARAM_8BYTES 0x03
 
+#define PARAM_TYPE_MASK   0x0F
 #define PARAM_TYPE_INT   (0x00<<2)
 #define PARAM_TYPE_FLOAT (0x01<<2)
 
@@ -56,12 +63,22 @@ struct param_s {
 #define PARAM_VARIABLE (0x00<<7)
 #define PARAM_GROUP    (0x01<<7)
 
+#define PARAM_EXTENDED (1<<4)
+
+#define PARAM_CORE (1<<5)
+
 #define PARAM_RONLY (1<<6)
 
 #define PARAM_START 1
 #define PARAM_STOP  0
 
 #define PARAM_SYNC 0x02
+
+// Extended type bits
+#define PARAM_PERSISTENT (1 << 8)
+
+#define PARAM_PERSISTENT_STORED      1
+#define PARAM_PERSISTENT_NOT_STORED  0
 
 // User-friendly macros
 #define PARAM_UINT8 (PARAM_1BYTE | PARAM_TYPE_INT | PARAM_UNSIGNED)
@@ -73,30 +90,72 @@ struct param_s {
 
 #define PARAM_FLOAT (PARAM_4BYTES | PARAM_TYPE_FLOAT | PARAM_SIGNED)
 
+// CRTP
+#define TOC_CH 0
+#define READ_CH 1
+#define WRITE_CH 2
+#define MISC_CH 3
+// CRTP Misc
+#define MISC_SETBYNAME            0
+#define MISC_VALUE_UPDATED        1
+#define MISC_GET_EXTENDED_TYPE    2
+#define MISC_PERSISTENT_STORE     3
+#define MISC_PERSISTENT_GET_STATE 4
+#define MISC_PERSISTENT_CLEAR     5
+#define MISC_GET_DEFAULT_VALUE    6
+
 /* Macros */
+
+#define PARAM_ADD_FULL(TYPE, NAME, ADDRESS, CALLBACK, DEFAULT_GETTER) \
+    { .type = ((TYPE) <= 0xFF) ? ((TYPE) & 0xFF) : (((TYPE) | PARAM_EXTENDED) & 0xFF), \
+      .extended_type = (((TYPE) & 0xFF00) >> 8), \
+      .name = #NAME, \
+      .address = (void*)(ADDRESS), \
+      .callback = (void *)CALLBACK, \
+      .getter = (void *)DEFAULT_GETTER, },
+// Storing (TYPE) & 0xFF instead of just (TYPE) in the first branch is a no-op,
+// but it prevents noisy spurious warnings when compiling bindings with Clang.
+
 #define PARAM_ADD(TYPE, NAME, ADDRESS) \
-   { .type = TYPE, .name = #NAME, .address = (void*)(ADDRESS), },
+    PARAM_ADD_FULL(TYPE, NAME, ADDRESS, 0, 0)
+
+// The callback notification function will run from the param task, it should not block and should run quickly.
+#define PARAM_ADD_WITH_CALLBACK(TYPE, NAME, ADDRESS, CALLBACK) \
+    PARAM_ADD_FULL(TYPE, NAME, ADDRESS, CALLBACK, 0)
+
+#define PARAM_ADD_CORE(TYPE, NAME, ADDRESS) \
+  PARAM_ADD(TYPE | PARAM_CORE, NAME, ADDRESS)
+
+#define PARAM_ADD_CORE_WITH_CALLBACK(TYPE, NAME, ADDRESS, CALLBACK) \
+  PARAM_ADD_WITH_CALLBACK(TYPE | PARAM_CORE, NAME, ADDRESS, CALLBACK)
 
 #define PARAM_ADD_GROUP(TYPE, NAME, ADDRESS) \
-   { \
-  .type = TYPE, .name = #NAME, .address = (void*)(ADDRESS), },
-
-// Fix to make unit tests run on MacOS
-#ifdef __APPLE__
-#define PARAM_GROUP_START(NAME)  \
-  static const struct param_s __params_##NAME[] __attribute__((section("__DATA,__.param." #NAME), used)) = { \
-  PARAM_ADD_GROUP(PARAM_GROUP | PARAM_START, NAME, 0x0)
-#else
-#define PARAM_GROUP_START(NAME)  \
-  static const struct param_s __params_##NAME[] __attribute__((section(".param." #NAME), used)) = { \
-  PARAM_ADD_GROUP(PARAM_GROUP | PARAM_START, NAME, 0x0)
-#endif
-
-//#define PARAM_GROUP_START_SYNC(NAME, LOCK) PARAM_ADD_GROUP(PARAM_GROUP | PARAM_START, NAME, LOCK);
+  { \
+  .type = TYPE, .name = #NAME, .address = (void*)(ADDRESS), .callback = 0, .getter = 0, },
 
 #define PARAM_GROUP_STOP(NAME) \
   PARAM_ADD_GROUP(PARAM_GROUP | PARAM_STOP, stop_##NAME, 0x0) \
   };
 
-#endif /* __PARAM_H__ */
+#ifndef UNIT_TEST_MODE
 
+#define PARAM_GROUP_START(NAME)  \
+  static struct param_s __params_##NAME[] __attribute__((section(".param." #NAME), used)) = { \
+  PARAM_ADD_GROUP(PARAM_GROUP | PARAM_START, NAME, 0x0)
+
+#else // UNIT_TEST_MODE
+
+  // Do not use a different data section when running unit tests
+#define PARAM_GROUP_START(NAME)  \
+  static const struct param_s __params_##NAME[] = { \
+  PARAM_ADD_GROUP(PARAM_GROUP | PARAM_START, NAME, 0x0)
+
+#endif // UNIT_TEST_MODE
+
+// Do not remove! This definition is used by doxygen to generate parameter documentation.
+/** @brief Core parameters
+ *
+ * The core parameters are considered part of the official API and are guaranteed
+ * to be stable over time.
+ *
+ * @defgroup PARAM_CORE_GROUP */

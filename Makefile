@@ -1,373 +1,158 @@
-# CrazyFlie's Makefile
-# Copyright (c) 2011,2012 Bitcraze AB
-# This Makefile compiles all the objet file to ./bin/ and the resulting firmware
-# image in ./cfX.elf and ./cfX.bin
 
-# Put your personal build config in tools/make/config.mk and DO NOT COMMIT IT!
-# Make a copy of tools/make/config.mk.example to get you started
--include tools/make/config.mk
-
-CFLAGS += $(EXTRA_CFLAGS)
-
-######### JTAG and environment configuration ##########
 OPENOCD           ?= openocd
 OPENOCD_INTERFACE ?= interface/stlink-v2.cfg
+OPENOCD_TARGET    ?= target/stm32f4x.cfg
 OPENOCD_CMDS      ?=
-CROSS_COMPILE     ?= arm-none-eabi-
-PYTHON2           ?= python2
+
+CPU                        = stm32f4
+LOAD_ADDRESS_stm32f4       = 0x8000000
+LOAD_ADDRESS_CLOAD_stm32f4 = 0x8004000
+
+PYTHON            ?= python3
+
+# Cload is handled in a special way on windows in WSL to use the Windows python interpreter
+ifdef WSL_DISTRO_NAME
+CLOAD_SCRIPT      ?= python.exe -m cfloader
+else
+CLOAD_SCRIPT      ?= $(PYTHON) -m cfloader
+endif
+
 DFU_UTIL          ?= dfu-util
-CLOAD             ?= 1
-DEBUG             ?= 0
-CLOAD_SCRIPT      ?= python3 -m cfloader
+
 CLOAD_CMDS        ?=
 CLOAD_ARGS        ?=
-PLATFORM          ?= cf2
-LPS_TDMA_ENABLE   ?= 0
-LPS_TDOA_ENABLE   ?= 0
-LPS_TDOA3_ENABLE  ?= 0
 
+ARCH := stm32f4
+SRCARCH := stm32f4
 
-# Platform configuration handling
--include current_platform.mk
-include tools/make/platform.mk
+ARCH_CFLAGS += -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16 -g3
+ARCH_CFLAGS += -fno-math-errno -DARM_MATH_CM4 -D__FPU_PRESENT=1 -mfp16-format=ieee
+ARCH_CFLAGS += -Wno-array-bounds -Wno-stringop-overread
+ARCH_CFLAGS += -Wno-stringop-overflow
+ARCH_CFLAGS += -DSTM32F4XX -DSTM32F40_41xxx -DHSE_VALUE=8000000 -DUSE_STDPERIPH_DRIVER
 
-CFLAGS += -DCRAZYFLIE_FW
-
-######### Stabilizer configuration ##########
-## These are set by the platform (see tools/make/platforms/*.mk), can be overwritten here
-ESTIMATOR          ?= any
-CONTROLLER         ?= Any # one of Any, PID, Mellinger
-POWER_DISTRIBUTION ?= stock
-
-#OpenOCD conf
-RTOS_DEBUG        ?= 0
-
-LIB = src/lib
-FREERTOS = src/lib/FreeRTOS
-
-
-############### CPU-specific build configuration ################
-
-ifeq ($(CPU), stm32f4)
+FREERTOS = $(srctree)/vendor/FreeRTOS
 PORT = $(FREERTOS)/portable/GCC/ARM_CM4F
-LINKER_DIR = tools/make/F405/linker
-ST_OBJ_DIR  = tools/make/F405
-
-OPENOCD_TARGET    ?= target/stm32f4x_stlink.cfg
-
-
-# St Lib
-VPATH += $(LIB)/CMSIS/STM32F4xx/Source/
-VPATH += $(LIB)/STM32_USB_Device_Library/Core/src
-VPATH += $(LIB)/STM32_USB_OTG_Driver/src
-VPATH += src/deck/api src/deck/core src/deck/drivers/src src/deck/drivers/src/test
-VPATH += src/utils/src/tdoa src/utils/src/lighthouse
-CRT0 = startup_stm32f40xx.o system_stm32f4xx.o
-
-# Add ST lib object files
--include $(ST_OBJ_DIR)/st_obj.mk
-
-# USB obj
-ST_OBJ += usb_core.o usb_dcd_int.o usb_dcd.o
-# USB Device obj
-ST_OBJ += usbd_ioreq.o usbd_req.o usbd_core.o
-
+LIB = $(srctree)/src/lib
 PROCESSOR = -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16
-CFLAGS += -fno-math-errno -DARM_MATH_CM4 -D__FPU_PRESENT=1 -D__TARGET_FPU_VFP -mfp16-format=ieee
+LINKER_DIR = $(srctree)/tools/make/F405/linker
 
-#Flags required by the ST library
-CFLAGS += -DSTM32F4XX -DSTM32F40_41xxx -DHSE_VALUE=8000000 -DUSE_STDPERIPH_DRIVER
+LDFLAGS += --specs=nosys.specs --specs=nano.specs $(PROCESSOR) -nostdlib
+image_LDFLAGS += -z noexecstack
+image_LDFLAGS += -Wl,-Map=$(PROG).map,--cref,--gc-sections,--undefined=uxTopUsedPriority
+image_LDFLAGS += -L$(srctree)/tools/make/F405/linker
+image_LDFLAGS += -T $(LINKER_DIR)/FLASH_CLOAD.ld
 
-LOAD_ADDRESS_stm32f4 = 0x8000000
-LOAD_ADDRESS_CLOAD_stm32f4 = 0x8004000
-endif
-
-################ Build configuration ##################
-
-# libdw dw1000 driver
-VPATH += vendor/libdw1000/src
-
-# vl53l1 driver
-VPATH += $(LIB)/vl53l1/core/src
-
-# FreeRTOS
-VPATH += $(PORT)
-PORT_OBJ = port.o
-VPATH +=  $(FREERTOS)/portable/MemMang
-MEMMANG_OBJ = heap_4.o
-
-VPATH += $(FREERTOS)
-FREERTOS_OBJ = list.o tasks.o queue.o timers.o $(MEMMANG_OBJ)
-
-#FatFS
-VPATH += $(LIB)/FatFS
-PROJ_OBJ += diskio.o ff.o syscall.o unicode.o fatfs_sd.o
-ifeq ($(FATFS_DISKIO_TESTS), 1)
-PROJ_OBJ += diskio_function_tests.o
-CFLAGS += -DUSD_RUN_DISKIO_FUNCTION_TESTS
-endif
-
-# Crazyflie sources
-VPATH += src/init src/hal/src src/modules/src src/utils/src src/drivers/bosch/src src/drivers/src src/platform
-
-
-############### Source files configuration ################
-
-# Init
-PROJ_OBJ += main.o
-PROJ_OBJ += platform.o platform_utils.o platform_$(PLATFORM).o platform_$(CPU).o
-
-# Drivers
-PROJ_OBJ += exti.o nvic.o motors.o
-PROJ_OBJ += led_f405.o mpu6500.o i2cdev_f405.o ws2812_cf2.o lps25h.o i2c_drv.o
-PROJ_OBJ += ak8963.o eeprom.o maxsonar.o piezo.o
-PROJ_OBJ += uart_syslink.o swd.o uart1.o uart2.o watchdog.o
-PROJ_OBJ += cppm.o
-PROJ_OBJ += bmi055_accel.o bmi055_gyro.o bmi160.o bmp280.o bstdr_comm_support.o bmm150.o
-PROJ_OBJ += bmi088_accel.o bmi088_gyro.o bmi088_fifo.o bmp3.o
-PROJ_OBJ += pca9685.o vl53l0x.o pca95x4.o pca9555.o vl53l1x.o pmw3901.o
-PROJ_OBJ += amg8833.o lh_bootloader.o
-
-# USB Files
-PROJ_OBJ += usb_bsp.o usblink.o usbd_desc.o usb.o
-
-# Hal
-PROJ_OBJ += crtp.o ledseq.o freeRTOSdebug.o buzzer.o
-PROJ_OBJ += pm_$(CPU).o syslink.o radiolink.o ow_syslink.o proximity.o usec_time.o
-PROJ_OBJ += sensors.o
-
-# libdw
-PROJ_OBJ += libdw1000.o libdw1000Spi.o
-
-# vl53l1 lib
-PROJ_OBJ += vl53l1_api_core.o vl53l1_api.o vl53l1_core.o vl53l1_silicon_core.o vl53l1_api_strings.o
-PROJ_OBJ += vl53l1_api_calibration.o vl53l1_api_debug.o vl53l1_api_preset_modes.o vl53l1_error_strings.o
-PROJ_OBJ += vl53l1_register_funcs.o vl53l1_wait.o vl53l1_core_support.o
-
-# Modules
-PROJ_OBJ += system.o comm.o console.o pid.o crtpservice.o param.o
-PROJ_OBJ += log.o worker.o trigger.o sitaw.o queuemonitor.o msp.o
-PROJ_OBJ += platformservice.o sound_cf2.o extrx.o sysload.o mem_cf2.o
-PROJ_OBJ += range.o
-
-# Stabilizer modules
-PROJ_OBJ += commander.o crtp_commander.o crtp_commander_rpyt.o
-PROJ_OBJ += crtp_commander_generic.o crtp_localization_service.o
-PROJ_OBJ += attitude_pid_controller.o sensfusion6.o stabilizer.o
-PROJ_OBJ += position_estimator_altitude.o position_controller_pid.o
-PROJ_OBJ += estimator.o estimator_complementary.o
-PROJ_OBJ += controller.o controller_pid.o controller_mellinger.o
-PROJ_OBJ += power_distribution_$(POWER_DISTRIBUTION).o
-PROJ_OBJ += estimator_kalman.o kalman_core.o kalman_supervisor.o
-
-# High-Level Commander
-PROJ_OBJ += crtp_commander_high_level.o planner.o pptraj.o
-
-# Deck Core
-PROJ_OBJ += deck.o deck_info.o deck_drivers.o deck_test.o
-
-# Deck API
-PROJ_OBJ += deck_constants.o
-PROJ_OBJ += deck_digital.o
-PROJ_OBJ += deck_analog.o
-PROJ_OBJ += deck_spi.o
-
-# Decks
-PROJ_OBJ += bigquad.o
-PROJ_OBJ += ledring12.o
-PROJ_OBJ += buzzdeck.o
-PROJ_OBJ += gtgps.o
-PROJ_OBJ += cppmdeck.o
-PROJ_OBJ += usddeck.o
-PROJ_OBJ += zranger.o zranger2.o
-PROJ_OBJ += locodeck.o
-PROJ_OBJ += clockCorrectionEngine.o
-PROJ_OBJ += lpsTwrTag.o
-PROJ_OBJ += lpsTdoa2Tag.o
-PROJ_OBJ += lpsTdoa3Tag.o tdoaEngine.o tdoaStats.o tdoaStorage.o
-PROJ_OBJ += outlierFilter.o
-PROJ_OBJ += flowdeck_v1v2.o
-PROJ_OBJ += oa.o
-PROJ_OBJ += multiranger.o
-PROJ_OBJ += lighthouse.o
-PROJ_OBJ += activeMarkerDeck.o
-
-ifeq ($(LPS_TDOA_ENABLE), 1)
-CFLAGS += -DLPS_TDOA_ENABLE
-endif
-
-ifeq ($(LPS_TDOA3_ENABLE), 1)
-CFLAGS += -DLPS_TDOA3_ENABLE
-endif
-
-ifeq ($(LPS_TDMA_ENABLE), 1)
-CFLAGS += -DLPS_TDMA_ENABLE
-endif
-
-ifdef SENSORS
-SENSORS_UPPER = $(shell echo $(SENSORS) | tr a-z A-Z)
-CFLAGS += -DSENSORS_FORCE=SensorImplementation_$(SENSORS)
-
-# Add sensor file to the build if needed
-ifeq (,$(findstring DSENSOR_INCLUDED_$(SENSORS_UPPER),$(CFLAGS)))
-CFLAGS += -DSENSOR_INCLUDED_$(SENSORS_UPPER)
-PROJ_OBJ += sensors_$(SENSORS).o
-endif
-endif
-
-#Deck tests
-PROJ_OBJ += exptest.o
-PROJ_OBJ += exptestRR.o
-PROJ_OBJ += exptestBolt.o
-#PROJ_OBJ += bigquadtest.o
-#PROJ_OBJ += uarttest.o
-
-
-# Utilities
-PROJ_OBJ += filter.o cpuid.o cfassert.o  eprintf.o crc.o num.o debug.o
-PROJ_OBJ += version.o FreeRTOS-openocd.o
-PROJ_OBJ += configblockeeprom.o crc_bosch.o
-PROJ_OBJ += sleepus.o
-PROJ_OBJ += pulse_processor.o lighthouse_geometry.o ootx_decoder.o lighthouse_calibration.o
-
-ifeq ($(DEBUG_PRINT_ON_SEGGER_RTT), 1)
-VPATH += $(LIB)/Segger_RTT/RTT
-INCLUDES += -I$(LIB)/Segger_RTT/RTT
-PROJ_OBJ += SEGGER_RTT.o SEGGER_RTT_printf.o
-CFLAGS += -DDEBUG_PRINT_ON_SEGGER_RTT
-endif
-
-# Libs
-PROJ_OBJ += libarm_math.a
-
-OBJ = $(FREERTOS_OBJ) $(PORT_OBJ) $(ST_OBJ) $(PROJ_OBJ) $(CRT0)
-
-############### Compilation configuration ################
-AS = $(CROSS_COMPILE)as
-CC = $(CROSS_COMPILE)gcc
-LD = $(CROSS_COMPILE)gcc
-SIZE = $(CROSS_COMPILE)size
-OBJCOPY = $(CROSS_COMPILE)objcopy
-GDB = $(CROSS_COMPILE)gdb
-
-INCLUDES += -I$(FREERTOS)/include -I$(PORT) -Isrc
-INCLUDES += -Isrc/config -Isrc/hal/interface -Isrc/modules/interface
-INCLUDES += -Isrc/utils/interface -Isrc/drivers/interface -Isrc/platform
-INCLUDES += -Ivendor/CMSIS/CMSIS/Include -Isrc/drivers/bosch/interface
-
-INCLUDES += -I$(LIB)/STM32F4xx_StdPeriph_Driver/inc
+INCLUDES += -I$(srctree)/vendor/CMSIS/CMSIS/Core/Include -I$(srctree)/vendor/CMSIS/CMSIS/DSP/Include
+INCLUDES += -I$(srctree)/vendor/libdw1000/inc
+INCLUDES += -I$(FREERTOS)/include -I$(PORT)
+INCLUDES += -I$(srctree)/src/config
+INCLUDES += -I$(srctree)/src/platform/interface
+INCLUDES += -I$(srctree)/src/deck/interface -I$(srctree)/src/deck/drivers/interface
+INCLUDES += -I$(srctree)/src/drivers/interface -I$(srctree)/src/drivers/bosch/interface
+INCLUDES += -I$(srctree)/src/drivers/esp32/interface
+INCLUDES += -I$(srctree)/src/hal/interface
+INCLUDES += -I$(srctree)/src/modules/interface -I$(srctree)/src/modules/interface/kalman_core -I$(srctree)/src/modules/interface/lighthouse  -I$(srctree)/src/modules/interface/outlierfilter
+INCLUDES += -I$(srctree)/src/modules/interface/cpx -I$(srctree)/src/modules/interface/p2pDTR -I$(srctree)/src/modules/interface/controller  -I$(srctree)/src/modules/interface/estimator
+INCLUDES += -I$(srctree)/src/utils/interface -I$(srctree)/src/utils/interface/kve -I$(srctree)/src/utils/interface/lighthouse -I$(srctree)/src/utils/interface/tdoa
+INCLUDES += -I$(LIB)/FatFS
 INCLUDES += -I$(LIB)/CMSIS/STM32F4xx/Include
 INCLUDES += -I$(LIB)/STM32_USB_Device_Library/Core/inc
 INCLUDES += -I$(LIB)/STM32_USB_OTG_Driver/inc
-INCLUDES += -Isrc/deck/interface -Isrc/deck/drivers/interface
-INCLUDES += -Isrc/utils/interface/clockCorrection
-INCLUDES += -Isrc/utils/interface/tdoa
-INCLUDES += -Isrc/utils/interface/lighthouse
-INCLUDES += -Ivendor/libdw1000/inc
-INCLUDES += -I$(LIB)/FatFS
-INCLUDES += -I$(LIB)/vl53l1
-INCLUDES += -I$(LIB)/vl53l1/core/inc
+INCLUDES += -I$(LIB)/STM32F4xx_StdPeriph_Driver/inc
+INCLUDES += -I$(LIB)/vl53l1 -I$(LIB)/vl53l1/core/inc
+INCLUDES += -I$(KBUILD_OUTPUT)/include/generated
 
-ifeq ($(DEBUG), 1)
-  CFLAGS += -O0 -g3 -DDEBUG
-  # Prevent silent errors when converting between types (requires explicit casting)
-  CFLAGS += -Wconversion
+# Here we tell Kbuild where to look for Kbuild files which will tell the
+# buildsystem which sources to build
+objs-y += src
+objs-y += vendor
+
+objs-y += app_api
+objs-y += $(OOT)
+
+MEM_SIZE_FLASH_K = 1008
+MEM_SIZE_RAM_K = 128
+MEM_SIZE_CCM_K = 64
+
+
+#
+# Make sure Kbuild use our config that hinders some configs from being enabled
+# on allyesconfig or randconfig.
+#
+export KCONFIG_ALLCONFIG ?= configs/all.config
+
+KBUILD_OUTPUT ?= build
+
+-include $(KBUILD_OUTPUT)/include/config/auto.conf
+
+#
+# Special hack to handle float define. Kconfig has no float values
+# so we use string. To avoid having to do atof in code we instead
+# catch it here and convert to an, unquoted, float define.
+#
+ifneq ($(CONFIG_DECK_LOCO_2D_POSITION_HEIGHT),)
+unquoted = $(patsubst "%",%,$(CONFIG_DECK_LOCO_2D_POSITION_HEIGHT))
+ARCH_CFLAGS += -DDECK_LOCO_2D_POSITION_HEIGHT=$(unquoted)
+endif
+
+ifeq ($(CONFIG_PLATFORM_CF21BL), y)
+PLATFORM = cf21bl
+endif
+
+ifeq ($(CONFIG_PLATFORM_TAG),y)
+PLATFORM = tag
+endif
+
+ifeq ($(CONFIG_PLATFORM_BOLT), y)
+PLATFORM = bolt
+endif
+
+ifeq ($(CONFIG_PLATFORM_FLAPPER),y)
+PLATFORM = flapper
+endif
+
+
+PLATFORM  ?= cf2
+PROG ?= $(PLATFORM)
+
+ifeq ($(CONFIG_DEBUG),y)
+ARCH_CFLAGS	+= -O0 -Wconversion
 else
-	# Fail on warnings
-  CFLAGS += -Os -g3 -Werror
+ARCH_CFLAGS += -Os -Werror
 endif
 
-ifeq ($(LTO), 1)
-  CFLAGS += -flto
-endif
+_all:
 
-CFLAGS += -DBOARD_REV_$(REV) -DESTIMATOR_NAME=$(ESTIMATOR)Estimator -DCONTROLLER_NAME=ControllerType$(CONTROLLER) -DPOWER_DISTRIBUTION_TYPE_$(POWER_DISTRIBUTION)
+all: $(PROG).hex $(PROG).bin
+	@echo "Build for the $(PLATFORM) platform!"
+	@$(PYTHON) $(srctree)/tools/make/versionTemplate.py --crazyflie-base $(srctree) --print-version
+	@$(PYTHON) $(srctree)/tools/make/size.py $(SIZE) $(PROG).elf $(MEM_SIZE_FLASH_K) $(MEM_SIZE_RAM_K) $(MEM_SIZE_CCM_K)
 
-CFLAGS += $(PROCESSOR) $(INCLUDES)
-
-
-CFLAGS += -Wall -Wmissing-braces -fno-strict-aliasing $(C_PROFILE) -std=gnu11
-# Compiler flags to generate dependency files:
-CFLAGS += -MD -MP -MF $(BIN)/dep/$(@).d -MQ $(@)
-#Permits to remove un-used functions and global variables from output file
-CFLAGS += -ffunction-sections -fdata-sections
-# Prevent promoting floats to doubles
-CFLAGS += -Wdouble-promotion
-
-
-ASFLAGS = $(PROCESSOR) $(INCLUDES)
-LDFLAGS = --specs=nosys.specs --specs=nano.specs $(PROCESSOR) -Wl,-Map=$(PROG).map,--cref,--gc-sections,--undefined=uxTopUsedPriority 
-
-#Flags required by the ST library
-ifeq ($(CLOAD), 1)
-  LDFLAGS += -T $(LINKER_DIR)/FLASH_CLOAD.ld
-  LOAD_ADDRESS = $(LOAD_ADDRESS_CLOAD_$(CPU))
-else
-  LDFLAGS += -T $(LINKER_DIR)/FLASH.ld
-  LOAD_ADDRESS = $(LOAD_ADDRESS_$(CPU))
-endif
-
-ifeq ($(LTO), 1)
-  LDFLAGS += -Os -flto -fuse-linker-plugin
-endif
-
-#Program name
-PROG = $(PLATFORM)
-#Where to compile the .o
-BIN = bin
-VPATH += $(BIN)
-
-#Dependency files to include
-DEPS := $(foreach o,$(OBJ),$(BIN)/dep/$(o).d)
-
-##################### Misc. ################################
-ifeq ($(SHELL),/bin/sh)
-  COL_RED=\033[1;31m
-  COL_GREEN=\033[1;32m
-  COL_RESET=\033[m
-endif
-
-#################### Targets ###############################
-
-
-all: check_submodules build
-build:
-# Each target is in a different line, so they are executed one after the other even when the processor has multiple cores (when the -j option for the make command is > 1). See: https://www.gnu.org/software/make/manual/html_node/Parallel.html
-	@$(MAKE) --no-print-directory clean_version
-	@$(MAKE) --no-print-directory compile
-	@$(MAKE) --no-print-directory print_version
-	@$(MAKE) --no-print-directory size
-compile: $(PROG).hex $(PROG).bin $(PROG).dfu
-
-libarm_math.a:
-	+$(MAKE) -C tools/make/cmsis_dsp/ V=$(V)
-
-clean_version:
-ifeq ($(SHELL),/bin/sh)
-	@echo "  CLEAN_VERSION"
-	@rm -f version.c
-endif
-
-print_version:
-	@echo "Build for the $(PLATFORM_NAME_$(PLATFORM))!"
-	@$(PYTHON2) tools/make/versionTemplate.py --print-version
-ifeq ($(CLOAD), 1)
-	@echo "Crazyloader build!"
-endif
-ifeq ($(FATFS_DISKIO_TESTS), 1)
-	@echo "WARNING: FatFS diskio tests enabled. Erases SD-card!"
-endif
+include tools/make/targets.mk
 
 size:
-	@$(SIZE) -B $(PROG).elf
+	@$(PYTHON) $(srctree)/tools/make/size.py $(SIZE) $(PROG).elf $(MEM_SIZE_FLASH_K) $(MEM_SIZE_RAM_K) $(MEM_SIZE_CCM_K)
 
-#Radio bootloader
+# Radio bootloader
+CLOAD ?= 1
 cload:
 ifeq ($(CLOAD), 1)
 	$(CLOAD_SCRIPT) $(CLOAD_CMDS) flash $(CLOAD_ARGS) $(PROG).bin stm32-fw
 else
 	@echo "Only cload build can be bootloaded. Launch build and cload with CLOAD=1"
 endif
+
+# Flags required by the ST library
+ifeq ($(CLOAD), 1)
+  LOAD_ADDRESS = $(LOAD_ADDRESS_CLOAD_$(CPU))
+else
+  LOAD_ADDRESS = $(LOAD_ADDRESS_$(CPU))
+endif
+
+unit:
+# The flag "-DUNITY_INCLUDE_DOUBLE" allows comparison of double values in Unity. See: https://stackoverflow.com/a/37790196
+	rake unit "DEFINES=$(ARCH_CFLAGS) -DUNITY_INCLUDE_DOUBLE" "FILES=$(FILES)" "UNIT_TEST_STYLE=$(UNIT_TEST_STYLE)"
 
 #Flash the stm.
 flash:
@@ -380,8 +165,15 @@ flash_verify:
 	$(OPENOCD) -d2 -f $(OPENOCD_INTERFACE) $(OPENOCD_CMDS) -f $(OPENOCD_TARGET) -c init -c targets -c "reset halt" \
                  -c "verify_image $(PROG).bin $(LOAD_ADDRESS) bin" -c "reset run" -c shutdown
 
+#sends a usb message to the CF to place it in DFU mode, then updates firmware over usb
 flash_dfu:
-	$(DFU_UTIL) -a 0 -D $(PROG).dfu
+	$(PYTHON) $(srctree)/tools/make/usb-bootloader.py
+	$(DFU_UTIL) -d 0483:df11 -a 0 -s 0x08004000:leave -D $(PROG).bin
+
+#uses the dfu utility to flash the firmware at 0x08004000, just after the bootloader
+#call this target directly if CF cannont be flashed automatically through flash_dfu
+flash_dfu_manual:
+	$(DFU_UTIL) -d 0483:df11 -a 0 -s 0x08004000:leave -D $(PROG).bin
 
 #STM utility targets
 halt:
@@ -396,6 +188,10 @@ openocd:
 trace:
 	$(OPENOCD) -d2 -f $(OPENOCD_INTERFACE) $(OPENOCD_CMDS) -f $(OPENOCD_TARGET) -c init -c targets -f tools/trace/enable_trace.cfg
 
+rtt:
+	$(OPENOCD) -d2 -f $(OPENOCD_INTERFACE) $(OPENOCD_CMDS) -f $(OPENOCD_TARGET) -c init -c targets \
+	           -c "rtt setup 0x20000000 262144 \"SEGGER RTT\"" -c "rtt start" -c "rtt server start 2000 0"
+
 gdb: $(PROG).elf
 	$(GDB) -ex "target remote localhost:3333" -ex "monitor reset halt" $^
 
@@ -407,13 +203,27 @@ prep:
 	@$(CC) $(CFLAGS) -dM -E - < /dev/null
 
 check_submodules:
-	@$(PYTHON2) tools/make/check-for-submodules.py
+	@cd $(srctree); $(PYTHON) tools/make/check-for-submodules.py
 
-include tools/make/targets.mk
+# Give control over to Kbuild
+-include tools/kbuild/Makefile.kbuild
 
-#include dependencies
--include $(DEPS)
 
-unit:
-# The flag "-DUNITY_INCLUDE_DOUBLE" allows comparison of double values in Unity. See: https://stackoverflow.com/a/37790196
-	rake unit "DEFINES=$(CFLAGS) -DUNITY_INCLUDE_DOUBLE" "FILES=$(FILES)"
+ifeq ($(KBUILD_SRC),)
+# Python bindings
+MOD_INC = src/modules/interface
+MOD_SRC = src/modules/src
+
+bindings_python build/cffirmware.py: bindings/setup.py $(MOD_SRC)/*.c
+	swig -python -I$(MOD_INC) -Isrc/hal/interface -Isrc/utils/interface -I$(MOD_INC)/controller -Isrc/platform/interface -I$(MOD_INC)/outlierfilter -I$(MOD_INC)/kalman_core -o build/cffirmware_wrap.c bindings/cffirmware.i
+	$(PYTHON) bindings/setup.py build_ext --inplace
+	cp cffirmware_setup.py build/setup.py
+
+test_python: build/cffirmware.py
+	PYTHONPATH=build $(PYTHON) -m pytest test_python
+
+python_wheel: build/cffirmware.py
+	$(PYTHON) bindings/setup.py bdist_wheel
+endif
+
+.PHONY: all clean build compile unit prep erase flash check_submodules trace openocd gdb halt reset flash_dfu flash_dfu_manual flash_verify cload size print_version clean_version bindings_python test_python python_wheel

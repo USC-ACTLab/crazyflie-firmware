@@ -102,7 +102,6 @@
 bstdr_ret_t bstdr_comm_init(void)
 {
 	/**< Communication initialization --Optional!*/
-	i2cdevInit(I2C1_DEV);
 	return (bstdr_ret_t)0;
 }
 
@@ -161,4 +160,3 @@ void bstdr_ms_delay(uint32_t period)
 	/**< Delay code comes */
 	vTaskDelay(M2T(period)); // Delay a while to let the device stabilize
 }
-

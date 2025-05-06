@@ -7,7 +7,7 @@
  *
  * Crazyflie control firmware
  *
- * Copyright (C) 2012 BitCraze AB
+ * Copyright (C) 2012-2019 BitCraze AB
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -41,13 +41,14 @@
 #include "config.h"
 #include "crtp.h"
 #include "log.h"
-#include "crc.h"
+#include "crc32.h"
 #include "worker.h"
 #include "num.h"
 
 #include "console.h"
 #include "cfassert.h"
 #include "debug.h"
+#include "static_mem.h"
 
 #if 0
 #define LOG_DEBUG(fmt, ...) DEBUG_PRINT("D/log " fmt, ## __VA_ARGS__)
@@ -56,6 +57,13 @@
 #define LOG_DEBUG(...)
 #define LOG_ERROR(...)
 #endif
+
+/**
+ * Verify that log function is initialized.
+ * This can happen if stats counter is used, STATS_CNT_RATE_INIT() might not
+ * have been called.
+ */
+#define ASSERT_LOG_FUNCTION_INITIALIZED(function) ASSERT(function)
 
 
 static const uint8_t typeLength[] = {
@@ -69,6 +77,13 @@ static const uint8_t typeLength[] = {
   [LOG_FP16]   = 2,
 };
 
+#define LOG_TYPE_MASK (0x0f)
+
+typedef enum {
+  acqType_memory = 0,
+  acqType_function = 1,
+} acquisitionType_t;
+
 // Maximum log payload length (4 bytes are used for block id and timestamp)
 #define LOG_MAX_LEN 26
 
@@ -80,17 +95,21 @@ struct log_ops {
   uint8_t storageType : 4;
   uint8_t logType     : 4;
   void * variable;
+  acquisitionType_t acquisitionType;
 };
 
 struct log_block {
   int id;
   xTimerHandle timer;
+  StaticTimer_t timerBuffer;
+  uint32_t droppedPackets;
   struct log_ops * ops;
 };
 
-static struct log_ops logOps[LOG_MAX_OPS];
-static struct log_block logBlocks[LOG_MAX_BLOCKS];
+NO_DMA_CCM_SAFE_ZERO_INIT static struct log_ops logOps[LOG_MAX_OPS];
+NO_DMA_CCM_SAFE_ZERO_INIT static struct log_block logBlocks[LOG_MAX_BLOCKS];
 static xSemaphoreHandle logLock;
+static StaticSemaphore_t logLockBuffer;
 
 struct ops_setting {
     uint8_t logType;
@@ -102,6 +121,9 @@ struct ops_setting_v2 {
     uint16_t id;
 } __attribute__((packed));
 
+struct control_start_block_v2 {
+  uint16_t period_in_ms;
+} __attribute__((packed));
 
 #define TOC_CH      0
 #define CONTROL_CH  1
@@ -120,6 +142,7 @@ struct ops_setting_v2 {
 #define CONTROL_RESET           5
 #define CONTROL_CREATE_BLOCK_V2 6
 #define CONTROL_APPEND_BLOCK_V2 7
+#define CONTROL_START_BLOCK_V2  8
 
 #define BLOCK_ID_FREE -1
 
@@ -154,6 +177,9 @@ static int logDeleteBlock(int id);
 static int logStartBlock(int id, unsigned int period);
 static int logStopBlock(int id);
 static void logReset();
+static acquisitionType_t acquisitionTypeFromLogType(uint8_t logType);
+
+STATIC_MEM_TASK_ALLOC_STACK_NO_DMA_CCM_SAFE(logTask, LOG_TASK_STACKSIZE);
 
 void logInit(void)
 {
@@ -191,11 +217,11 @@ void logInit(void)
       memcpy(&p.data[5], logs[i].name, strlen(logs[i].name));
       len += strlen(logs[i].name);
     }
-    logsCrc = crcSlow(p.data, len);
+    logsCrc = crc32CalculateBuffer(p.data, len);
   }
 
   // Big lock that protects the log datastructures
-  logLock = xSemaphoreCreateMutex();
+  logLock = xSemaphoreCreateMutexStatic(&logLockBuffer);
 
   for (i=0; i<logsLen; i++)
   {
@@ -211,8 +237,7 @@ void logInit(void)
   logReset();
 
   //Start the log task
-  xTaskCreate(logTask, LOG_TASK_NAME,
-              LOG_TASK_STACKSIZE, NULL, LOG_TASK_PRI, NULL);
+  STATIC_MEM_TASK_CREATE(logTask, logTask, LOG_TASK_NAME, NULL, LOG_TASK_PRI);
 
   isInit = true;
 }
@@ -263,7 +288,7 @@ void logTOCProcess(int command)
     memcpy(&p.data[2], &logsCrc, 4);
     p.data[6]=LOG_MAX_BLOCKS;
     p.data[7]=LOG_MAX_OPS;
-    crtpSendPacket(&p);
+    crtpSendPacketBlock(&p);
     break;
   case CMD_GET_ITEM:  //Get log variable
     LOG_DEBUG("Packet is TOC_GET_ITEM Id: %d\n", p.data[1]);
@@ -290,18 +315,18 @@ void logTOCProcess(int command)
       p.header=CRTP_HEADER(CRTP_PORT_LOG, TOC_CH);
       p.data[0]=CMD_GET_ITEM;
       p.data[1]=n;
-      p.data[2]=logs[ptr].type;
+      p.data[2]=logGetType(ptr);
       p.size=3+2+strlen(group)+strlen(logs[ptr].name);
       ASSERT(p.size <= CRTP_MAX_DATA_SIZE); // Too long! The name of the group or the parameter may be too long.
       memcpy(p.data+3, group, strlen(group)+1);
       memcpy(p.data+3+strlen(group)+1, logs[ptr].name, strlen(logs[ptr].name)+1);
-      crtpSendPacket(&p);
+      crtpSendPacketBlock(&p);
     } else {
       LOG_DEBUG("    Index out of range!");
       p.header=CRTP_HEADER(CRTP_PORT_LOG, TOC_CH);
       p.data[0]=CMD_GET_ITEM;
       p.size=1;
-      crtpSendPacket(&p);
+      crtpSendPacketBlock(&p);
     }
     break;
   case CMD_GET_INFO_V2: //Get info packet about the log implementation
@@ -315,7 +340,7 @@ void logTOCProcess(int command)
     memcpy(&p.data[3], &logsCrc, 4);
     p.data[7]=LOG_MAX_BLOCKS;
     p.data[8]=LOG_MAX_OPS;
-    crtpSendPacket(&p);
+    crtpSendPacketBlock(&p);
     break;
   case CMD_GET_ITEM_V2:  //Get log variable
     memcpy(&logId, &p.data[1], 2);
@@ -343,18 +368,18 @@ void logTOCProcess(int command)
       p.header=CRTP_HEADER(CRTP_PORT_LOG, TOC_CH);
       p.data[0]=CMD_GET_ITEM_V2;
       memcpy(&p.data[1], &logId, 2);
-      p.data[3]=logs[ptr].type;
+      p.data[3]=logGetType(ptr);
       p.size=4+2+strlen(group)+strlen(logs[ptr].name);
       ASSERT(p.size <= CRTP_MAX_DATA_SIZE); // Too long! The name of the group or the parameter may be too long.
       memcpy(p.data+4, group, strlen(group)+1);
       memcpy(p.data+4+strlen(group)+1, logs[ptr].name, strlen(logs[ptr].name)+1);
-      crtpSendPacket(&p);
+      crtpSendPacketBlock(&p);
     } else {
       LOG_DEBUG("    Index out of range!");
       p.header=CRTP_HEADER(CRTP_PORT_LOG, TOC_CH);
       p.data[0]=CMD_GET_ITEM_V2;
       p.size=1;
-      crtpSendPacket(&p);
+      crtpSendPacketBlock(&p);
     }
     break;
   }
@@ -399,12 +424,18 @@ void logControlProcess()
                             (struct ops_setting_v2*)&p.data[2],
                             (p.size-2)/sizeof(struct ops_setting_v2) );
       break;
+    case CONTROL_START_BLOCK_V2:
+      {
+        struct control_start_block_v2* args = (struct control_start_block_v2 *)&p.data[2];
+        ret = logStartBlock(p.data[1], args->period_in_ms);
+      }
+      break;
   }
 
   //Commands answer
   p.data[2] = ret;
   p.size = 3;
-  crtpSendPacket(&p);
+  crtpSendPacketBlock(&p);
 }
 
 static int logCreateBlock(unsigned char id, struct ops_setting * settings, int len)
@@ -421,8 +452,8 @@ static int logCreateBlock(unsigned char id, struct ops_setting * settings, int l
     return ENOMEM;
 
   logBlocks[i].id = id;
-  logBlocks[i].timer = xTimerCreate( "logTimer", M2T(1000),
-                                     pdTRUE, &logBlocks[i], logBlockTimed );
+  logBlocks[i].timer = xTimerCreateStatic("logTimer", M2T(1000), pdTRUE,
+    &logBlocks[i], logBlockTimed, &logBlocks[i].timerBuffer);
   logBlocks[i].ops = NULL;
 
   if (logBlocks[i].timer == NULL)
@@ -450,8 +481,8 @@ static int logCreateBlockV2(unsigned char id, struct ops_setting_v2 * settings, 
     return ENOMEM;
 
   logBlocks[i].id = id;
-  logBlocks[i].timer = xTimerCreate( "logTimer", M2T(1000),
-                                     pdTRUE, &logBlocks[i], logBlockTimed );
+  logBlocks[i].timer = xTimerCreateStatic("logTimer", M2T(1000), pdTRUE,
+    &logBlocks[i], logBlockTimed, &logBlocks[i].timerBuffer);
   logBlocks[i].ops = NULL;
 
   if (logBlocks[i].timer == NULL)
@@ -494,7 +525,7 @@ static int logAppendBlock(int id, struct ops_setting * settings, int len)
     struct log_ops * ops;
     int varId;
 
-    if ((currentLength + typeLength[settings[i].logType&0x0F])>LOG_MAX_LEN) {
+    if ((currentLength + typeLength[settings[i].logType & LOG_TYPE_MASK])>LOG_MAX_LEN) {
       LOG_ERROR("Trying to append a full block. Block id %d.\n", id);
       return E2BIG;
     }
@@ -516,15 +547,17 @@ static int logAppendBlock(int id, struct ops_setting * settings, int len)
       }
 
       ops->variable    = logs[varId].address;
-      ops->storageType = logs[varId].type;
-      ops->logType     = settings[i].logType&0x0F;
+      ops->storageType = logGetType(varId);
+      ops->logType     = settings[i].logType & LOG_TYPE_MASK;
+      ops->acquisitionType = acquisitionTypeFromLogType(logs[varId].type);
 
       LOG_DEBUG("Appended variable %d to block %d\n", settings[i].id, id);
     } else {                     //Memory variable
       //TODO: Check that the address is in ram
       ops->variable    = (void*)(&settings[i]+1);
-      ops->storageType = (settings[i].logType>>4)&0x0F;
-      ops->logType     = settings[i].logType&0x0F;
+      ops->storageType = (settings[i].logType>>4) & LOG_TYPE_MASK;
+      ops->logType     = settings[i].logType & LOG_TYPE_MASK;
+      ops->acquisitionType = acqType_memory;
       i += 2;
 
       LOG_DEBUG("Appended var addr 0x%x to block %d\n", (int)ops->variable, id);
@@ -560,7 +593,7 @@ static int logAppendBlockV2(int id, struct ops_setting_v2 * settings, int len)
     struct log_ops * ops;
     int varId;
 
-    if ((currentLength + typeLength[settings[i].logType&0x0F])>LOG_MAX_LEN) {
+    if ((currentLength + typeLength[settings[i].logType & LOG_TYPE_MASK])>LOG_MAX_LEN) {
       LOG_ERROR("Trying to append a full block. Block id %d.\n", id);
       return E2BIG;
     }
@@ -582,15 +615,17 @@ static int logAppendBlockV2(int id, struct ops_setting_v2 * settings, int len)
       }
 
       ops->variable    = logs[varId].address;
-      ops->storageType = logs[varId].type;
-      ops->logType     = settings[i].logType&0x0F;
+      ops->storageType = logGetType(varId);
+      ops->logType     = settings[i].logType & LOG_TYPE_MASK;
+      ops->acquisitionType = acquisitionTypeFromLogType(logs[varId].type);
 
       LOG_DEBUG("Appended variable %d to block %d\n", settings[i].id, id);
     } else {                     //Memory variable
       //TODO: Check that the address is in ram
       ops->variable    = (void*)(&settings[i]+1);
-      ops->storageType = (settings[i].logType>>4)&0x0F;
-      ops->logType     = settings[i].logType&0x0F;
+      ops->storageType = (settings[i].logType>>4) & LOG_TYPE_MASK;
+      ops->logType     = settings[i].logType & LOG_TYPE_MASK;
+      ops->acquisitionType = acqType_memory;
       i += 2;
 
       LOG_DEBUG("Appended var addr 0x%x to block %d\n", (int)ops->variable, id);
@@ -726,61 +761,100 @@ void logRunBlock(void * arg)
       case LOG_UINT8:
       {
         uint8_t v;
-        memcpy(&v, ops->variable, sizeof(v));
+        if (ops->acquisitionType == acqType_function) {
+          logByFunction_t* logByFunction = (logByFunction_t*)ops->variable;
+          ASSERT_LOG_FUNCTION_INITIALIZED(logByFunction->acquireUInt8);
+          v = logByFunction->acquireUInt8(timestamp, logByFunction->data);
+        } else {
+          memcpy(&v, ops->variable, sizeof(v));
+        }
         valuei = v;
         break;
       }
       case LOG_INT8:
       {
         int8_t v;
-        memcpy(&v, ops->variable, sizeof(v));
+        if (ops->acquisitionType == acqType_function) {
+          logByFunction_t* logByFunction = (logByFunction_t*)ops->variable;
+          ASSERT_LOG_FUNCTION_INITIALIZED(logByFunction->acquireInt8);
+          v = logByFunction->acquireInt8(timestamp, logByFunction->data);
+        } else {
+          memcpy(&v, ops->variable, sizeof(v));
+        }
         valuei = v;
         break;
       }
       case LOG_UINT16:
       {
         uint16_t v;
-        memcpy(&v, ops->variable, sizeof(v));
+        if (ops->acquisitionType == acqType_function) {
+          logByFunction_t* logByFunction = (logByFunction_t*)ops->variable;
+          ASSERT_LOG_FUNCTION_INITIALIZED(logByFunction->acquireUInt16);
+          v = logByFunction->acquireUInt16(timestamp, logByFunction->data);
+        } else {
+          memcpy(&v, ops->variable, sizeof(v));
+        }
         valuei = v;
         break;
       }
       case LOG_INT16:
       {
         int16_t v;
-        memcpy(&v, ops->variable, sizeof(v));
+        if (ops->acquisitionType == acqType_function) {
+          logByFunction_t* logByFunction = (logByFunction_t*)ops->variable;
+          ASSERT_LOG_FUNCTION_INITIALIZED(logByFunction->acquireInt16);
+          v = logByFunction->acquireInt16(timestamp, logByFunction->data);
+        } else {
+          memcpy(&v, ops->variable, sizeof(v));
+        }
         valuei = v;
         break;
       }
       case LOG_UINT32:
       {
         uint32_t v;
-        memcpy(&v, ops->variable, sizeof(v));
+        if (ops->acquisitionType == acqType_function) {
+          logByFunction_t* logByFunction = (logByFunction_t*)ops->variable;
+          ASSERT_LOG_FUNCTION_INITIALIZED(logByFunction->acquireUInt32);
+          v = logByFunction->acquireUInt32(timestamp, logByFunction->data);
+        } else {
+          memcpy(&v, ops->variable, sizeof(v));
+        }
         valuei = v;
         break;
       }
       case LOG_INT32:
       {
         int32_t v;
-        memcpy(&v, ops->variable, sizeof(v));
+        if (ops->acquisitionType == acqType_function) {
+          logByFunction_t* logByFunction = (logByFunction_t*)ops->variable;
+          ASSERT_LOG_FUNCTION_INITIALIZED(logByFunction->acquireInt32);
+          v = logByFunction->acquireInt32(timestamp, logByFunction->data);
+        } else {
+          memcpy(&v, ops->variable, sizeof(v));
+        }
         valuei = v;
         break;
       }
       case LOG_FLOAT:
       {
         float v;
-        memcpy(&v, ops->variable, sizeof(v));
+        if (ops->acquisitionType == acqType_function) {
+          logByFunction_t* logByFunction = (logByFunction_t*)ops->variable;
+          ASSERT_LOG_FUNCTION_INITIALIZED(logByFunction->aquireFloat);
+          v = logByFunction->aquireFloat(timestamp, logByFunction->data);
+        } else {
+          memcpy(&v, ops->variable, sizeof(valuef));
+        }
         valuei = v;
+        valuef = v;
         break;
       }
     }
 
     if (ops->logType == LOG_FLOAT || ops->logType == LOG_FP16)
     {
-      if (ops->storageType == LOG_FLOAT)
-      {
-        memcpy(&valuef, ops->variable, sizeof(valuef));
-      }
-      else
+      if (ops->storageType != LOG_FLOAT)
       {
         valuef = valuei;
       }
@@ -816,7 +890,15 @@ void logRunBlock(void * arg)
   }
   else
   {
-    crtpSendPacket(&pk);
+    // No need to block here, since logging is not guaranteed
+    if (!crtpSendPacket(&pk))
+    {
+      if (blk->droppedPackets++ % 100 == 0)
+      {
+        DEBUG_PRINT("WARNING: LOG packets drop detected (%lu packets lost)\n",
+                    blk->droppedPackets);
+      }
+    }
   }
 }
 
@@ -911,29 +993,35 @@ static void logReset(void)
 }
 
 /* Public API to access log TOC from within the copter */
-int logGetVarId(char* group, char* name)
+static logVarId_t invalidVarId = 0xffffu;
+
+logVarId_t logGetVarId(const char* group, const char* name)
 {
   int i;
+  logVarId_t varId = invalidVarId;
   char * currgroup = "";
 
   for(i=0; i<logsLen; i++)
   {
     if (logs[i].type & LOG_GROUP) {
-      if (logs[i].type & LOG_START)
+      if (logs[i].type & LOG_START) {
         currgroup = logs[i].name;
-    } if ((!strcmp(group, currgroup)) && (!strcmp(name, logs[i].name)))
-      return i;
+      }
+    } else if ((!strcmp(group, currgroup)) && (!strcmp(name, logs[i].name))) {
+      varId = (logVarId_t)i;
+      return varId;
+    }
   }
 
-  return -1;
+  return invalidVarId;
 }
 
-int logGetType(int varid)
+inline int logGetType(logVarId_t varid)
 {
-  return logs[varid].type;
+  return logs[varid].type & LOG_TYPE_MASK;
 }
 
-void logGetGroupAndName(int varid, char** group, char** name)
+void logGetGroupAndName(logVarId_t varid, char** group, char** name)
 {
   char * currgroup = "";
   *group = 0;
@@ -954,7 +1042,7 @@ void logGetGroupAndName(int varid, char** group, char** name)
   }
 }
 
-void* logGetAddress(int varid)
+void* logGetAddress(logVarId_t varid)
 {
   return logs[varid].address;
 }
@@ -964,13 +1052,13 @@ uint8_t logVarSize(int type)
   return typeLength[type];
 }
 
-int logGetInt(int varid)
+int logGetInt(logVarId_t varid)
 {
   int valuei = 0;
 
-  ASSERT(varid >= 0);
+  ASSERT(logVarIdIsValid(varid));
 
-  switch(logs[varid].type)
+  switch(logGetType(varid))
   {
     case LOG_UINT8:
       valuei = *(uint8_t *)logs[varid].address;
@@ -998,17 +1086,25 @@ int logGetInt(int varid)
   return valuei;
 }
 
-float logGetFloat(int varid)
+float logGetFloat(logVarId_t varid)
 {
-  ASSERT(varid >= 0);
+  ASSERT(logVarIdIsValid(varid));
 
-  if (logs[varid].type == LOG_FLOAT)
+  if (logGetType(varid) == LOG_FLOAT)
     return *(float *)logs[varid].address;
 
   return logGetInt(varid);
 }
 
-unsigned int logGetUint(int varid)
+unsigned int logGetUint(logVarId_t varid)
 {
   return (unsigned int)logGetInt(varid);
+}
+
+static acquisitionType_t acquisitionTypeFromLogType(uint8_t logType) {
+  if (logType & LOG_BY_FUNCTION) {
+    return acqType_function;
+  }
+
+  return acqType_memory;
 }

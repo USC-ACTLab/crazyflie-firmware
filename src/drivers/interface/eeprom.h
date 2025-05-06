@@ -31,7 +31,6 @@
 #include <stdbool.h>
 #include "i2cdev.h"
 
-#define EEPROM_I2C_ADDR     0x50
 #define EEPROM_SIZE         0x1FFF
 
 /**
@@ -68,14 +67,14 @@ bool eepromReadBuffer(uint8_t* buffer, uint16_t readAddr, uint16_t len);
 
 /**
  * Write data to the eeprom from a supplied buffer.
- * Currently very slow as id does single byte write.
+ * 
  * @param buffer  The buffer to read the data from
  * @param writeAddr  The start address to write to
  * @param len  Number of bytes to write
  *
  * @return True on success, else false.
  */
-bool eepromWriteBuffer(uint8_t* buffer, uint16_t writeAddr, uint16_t len);
+bool eepromWriteBuffer(const uint8_t* buffer, uint16_t writeAddr, uint16_t len);
 
 // TODO
 bool eepromWritePage(uint8_t* buffer, uint16_t writeAddr);

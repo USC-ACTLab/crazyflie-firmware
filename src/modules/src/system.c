@@ -40,9 +40,9 @@
 #include "ledseq.h"
 #include "pm.h"
 
-#include "config.h"
 #include "system.h"
 #include "platform.h"
+#include "storage.h"
 #include "configblock.h"
 #include "worker.h"
 #include "freeRTOSdebug.h"
@@ -55,22 +55,42 @@
 #include "console.h"
 #include "usblink.h"
 #include "mem.h"
+#include "crtp_mem.h"
 #include "proximity.h"
 #include "watchdog.h"
 #include "queuemonitor.h"
 #include "buzzer.h"
 #include "sound.h"
 #include "sysload.h"
+#include "estimator_kalman.h"
+#include "estimator_ukf.h"
 #include "deck.h"
 #include "extrx.h"
+#include "app.h"
+#include "static_mem.h"
+#include "peer_localization.h"
+#include "cfassert.h"
+#include "i2cdev.h"
+#include "autoconf.h"
+#include "vcp_esc_passthrough.h"
+#if CONFIG_ENABLE_CPX
+  #include "cpxlink.h"
+#endif
 
 /* Private variable */
 static bool selftestPassed;
-static bool canFly;
+static uint8_t dumpAssertInfo = 0;
 static bool isInit;
+
+static char nrf_version[16];
+static uint8_t testLogParam;
+static uint8_t doAssert;
+
+STATIC_MEM_TASK_ALLOC(systemTask, SYSTEM_TASK_STACKSIZE);
 
 /* System wide synchronisation */
 xSemaphoreHandle canStartMutex;
+static StaticSemaphore_t canStartMutexBuffer;
 
 /* Private functions */
 static void systemTask(void *arg);
@@ -78,10 +98,7 @@ static void systemTask(void *arg);
 /* Public functions */
 void systemLaunch(void)
 {
-  xTaskCreate(systemTask, SYSTEM_TASK_NAME,
-              SYSTEM_TASK_STACKSIZE, NULL,
-              SYSTEM_TASK_PRI, NULL);
-
+  STATIC_MEM_TASK_CREATE(systemTask, systemTask, SYSTEM_TASK_NAME, NULL, SYSTEM_TASK_PRI);
 }
 
 // This must be the first module to be initialized!
@@ -90,11 +107,14 @@ void systemInit(void)
   if(isInit)
     return;
 
-  canStartMutex = xSemaphoreCreateMutex();
+  canStartMutex = xSemaphoreCreateMutexStatic(&canStartMutexBuffer);
   xSemaphoreTake(canStartMutex, portMAX_DELAY);
 
   usblinkInit();
   sysLoadInit();
+#if CONFIG_ENABLE_CPX
+  cpxlinkInit();
+#endif
 
   /* Initialized here so that DEBUG_PRINT (buffered) can be used early */
   debugInit();
@@ -115,11 +135,17 @@ void systemInit(void)
               *((int*)(MCU_ID_ADDRESS+0)), *((short*)(MCU_FLASH_SIZE_ADDRESS)));
 
   configblockInit();
+  storageInit();
   workerInit();
   adcInit();
   ledseqInit();
   pmInit();
   buzzerInit();
+  peerLocalizationInit();
+
+#ifdef CONFIG_APP_ENABLE
+  appInit();
+#endif
 
   isInit = true;
 }
@@ -144,23 +170,39 @@ void systemTask(void *arg)
   ledInit();
   ledSet(CHG_LED, 1);
 
-#ifdef DEBUG_QUEUE_MONITOR
+#ifdef CONFIG_DEBUG_QUEUE_MONITOR
   queueMonitorInit();
 #endif
 
-#ifdef ENABLE_UART1
-  uart1Init(9600);
+#ifdef CONFIG_DEBUG_PRINT_ON_UART1
+  uart1Init(CONFIG_DEBUG_PRINT_ON_UART1_BAUDRATE);
 #endif
-#ifdef ENABLE_UART2
-  uart2Init(115200);
-#endif
+
+  usecTimerInit();
+  i2cdevInit(I2C3_DEV);
+  i2cdevInit(I2C1_DEV);
+  passthroughInit();
 
   //Init the high-levels modules
   systemInit();
   commInit();
   commanderInit();
 
-  StateEstimatorType estimator = anyEstimator;
+  StateEstimatorType estimator = StateEstimatorTypeAutoSelect;
+
+  #ifdef CONFIG_ESTIMATOR_KALMAN_ENABLE
+  estimatorKalmanTaskInit();
+  #endif
+
+  #ifdef CONFIG_ESTIMATOR_UKF_ENABLE
+  errorEstimatorUkfTaskInit();
+  #endif
+
+  // Enabling incoming syslink messages to be added to the queue.
+  // This should probably be done later, but deckInit() takes a long time if this is done later.
+  uartslkEnableIncoming();
+
+  memInit();
   deckInit();
   estimator = deckGetRequiredEstimator();
   stabilizerInit(estimator);
@@ -169,31 +211,93 @@ void systemTask(void *arg)
     platformSetLowInterferenceRadioMode();
   }
   soundInit();
-  memInit();
+  crtpMemInit();
 
 #ifdef PROXIMITY_ENABLED
   proximityInit();
 #endif
 
+  systemRequestNRFVersion();
+
   //Test the modules
-  pass &= systemTest();
-  pass &= configblockTest();
-  pass &= commTest();
-  pass &= commanderTest();
-  pass &= stabilizerTest();
-  pass &= deckTest();
-  pass &= soundTest();
-  pass &= memTest();
-  pass &= watchdogNormalStartTest();
+  DEBUG_PRINT("About to run tests in system.c.\n");
+  if (systemTest() == false) {
+    pass = false;
+    DEBUG_PRINT("system [FAIL]\n");
+  }
+  if (configblockTest() == false) {
+    pass = false;
+    DEBUG_PRINT("configblock [FAIL]\n");
+  }
+  if (storageTest() == false) {
+    pass = false;
+    DEBUG_PRINT("storage [FAIL]\n");
+  }
+  if (commTest() == false) {
+    pass = false;
+    DEBUG_PRINT("comm [FAIL]\n");
+  }
+  if (commanderTest() == false) {
+    pass = false;
+    DEBUG_PRINT("commander [FAIL]\n");
+  }
+  if (stabilizerTest() == false) {
+    pass = false;
+    DEBUG_PRINT("stabilizer [FAIL]\n");
+  }
+
+  #ifdef CONFIG_ESTIMATOR_KALMAN_ENABLE
+  if (estimatorKalmanTaskTest() == false) {
+    pass = false;
+    DEBUG_PRINT("estimatorKalmanTask [FAIL]\n");
+  }
+  #endif
+
+  #ifdef CONFIG_ESTIMATOR_UKF_ENABLE
+  if (errorEstimatorUkfTaskTest() == false) {
+    pass = false;
+    DEBUG_PRINT("estimatorUKFTask [FAIL]\n");
+  }
+  #endif
+
+  if (deckTest() == false) {
+    pass = false;
+    DEBUG_PRINT("deck [FAIL]\n");
+  }
+  if (soundTest() == false) {
+    pass = false;
+    DEBUG_PRINT("sound [FAIL]\n");
+  }
+  if (memTest() == false) {
+    pass = false;
+    DEBUG_PRINT("mem [FAIL]\n");
+  }
+  if (crtpMemTest() == false) {
+    pass = false;
+    DEBUG_PRINT("CRTP mem [FAIL]\n");
+  }
+  if (watchdogNormalStartTest() == false) {
+    pass = false;
+    DEBUG_PRINT("watchdogNormalStart [FAIL]\n");
+  }
+  if (cfAssertNormalStartTest() == false) {
+    pass = false;
+    DEBUG_PRINT("cfAssertNormalStart [FAIL]\n");
+  }
+  if (peerLocalizationTest() == false) {
+    pass = false;
+    DEBUG_PRINT("peerLocalization [FAIL]\n");
+  }
 
   //Start the firmware
   if(pass)
   {
+    DEBUG_PRINT("Self test passed!\n");
     selftestPassed = 1;
     systemStart();
     soundSetEffect(SND_STARTUP);
-    ledseqRun(SYS_LED, seq_alive);
-    ledseqRun(LINK_LED, seq_testPassed);
+    ledseqRun(&seq_alive);
+    ledseqRun(&seq_testPassed);
   }
   else
   {
@@ -202,7 +306,7 @@ void systemTask(void *arg)
     {
       while(1)
       {
-        ledseqRun(SYS_LED, seq_testPassed); //Red passed == not passed!
+        ledseqRun(&seq_testFailed);
         vTaskDelay(M2T(2000));
         // System can be forced to start by setting the param to 1 from the cfclient
         if (selftestPassed)
@@ -249,14 +353,36 @@ void systemWaitStart(void)
   xSemaphoreGive(canStartMutex);
 }
 
-void systemSetCanFly(bool val)
+void systemRequestShutdown()
 {
-  canFly = val;
+  SyslinkPacket slp;
+
+  slp.type = SYSLINK_PM_ONOFF_SWITCHOFF;
+  slp.length = 0;
+  syslinkSendPacket(&slp);
 }
 
-bool systemCanFly(void)
+void systemRequestNRFVersion()
 {
-  return canFly;
+  SyslinkPacket slp;
+
+  slp.type = SYSLINK_SYS_NRF_VERSION;
+  slp.length = 0;
+  syslinkSendPacket(&slp);
+}
+
+void systemSyslinkReceive(SyslinkPacket *slp)
+{
+  if (slp->type == SYSLINK_SYS_NRF_VERSION)
+  {
+    size_t len = slp->length - 1;
+
+    if (sizeof(nrf_version) - 1 <=  len) {
+      len = sizeof(nrf_version) - 1;
+    }
+    memcpy(&nrf_version, &slp->data[0], len );
+    DEBUG_PRINT("NRF51 version: %s\n", nrf_version);
+  }
 }
 
 void vApplicationIdleHook( void )
@@ -271,6 +397,11 @@ void vApplicationIdleHook( void )
     watchdogReset();
   }
 
+  if (dumpAssertInfo != 0) {
+    printAssertSnapshotData();
+    dumpAssertInfo = 0;
+  }
+
   // Enter sleep mode. Does not work when debugging chip with SWD.
   // Currently saves about 20mA STM32F405 current consumption (~30%).
 #ifndef DEBUG
@@ -278,19 +409,76 @@ void vApplicationIdleHook( void )
 #endif
 }
 
-/*System parameters (mostly for test, should be removed from here) */
+static void doAssertCallback(void) {
+  if (doAssert) {
+    ASSERT_FAILED();
+  }
+}
+
+/**
+ * This parameter group contain read-only parameters pertaining to the CPU
+ * in the Crazyflie.
+ *
+ * These could be used to identify an unique quad.
+ */
 PARAM_GROUP_START(cpu)
-PARAM_ADD(PARAM_UINT16 | PARAM_RONLY, flash, MCU_FLASH_SIZE_ADDRESS)
-PARAM_ADD(PARAM_UINT32 | PARAM_RONLY, id0, MCU_ID_ADDRESS+0)
-PARAM_ADD(PARAM_UINT32 | PARAM_RONLY, id1, MCU_ID_ADDRESS+4)
-PARAM_ADD(PARAM_UINT32 | PARAM_RONLY, id2, MCU_ID_ADDRESS+8)
+
+/**
+ * @brief Size in kB of the device flash memory
+ */
+PARAM_ADD_CORE(PARAM_UINT16 | PARAM_RONLY, flash, MCU_FLASH_SIZE_ADDRESS)
+
+/**
+ * @brief Byte `0 - 3` of device unique id
+ */
+PARAM_ADD_CORE(PARAM_UINT32 | PARAM_RONLY, id0, MCU_ID_ADDRESS+0)
+
+/**
+ * @brief Byte `4 - 7` of device unique id
+ */
+PARAM_ADD_CORE(PARAM_UINT32 | PARAM_RONLY, id1, MCU_ID_ADDRESS+4)
+
+/**
+ * @brief Byte `8 - 11` of device unique id
+ */
+PARAM_ADD_CORE(PARAM_UINT32 | PARAM_RONLY, id2, MCU_ID_ADDRESS+8)
+
 PARAM_GROUP_STOP(cpu)
 
 PARAM_GROUP_START(system)
-PARAM_ADD(PARAM_INT8, selftestPassed, &selftestPassed)
-PARAM_GROUP_STOP(sytem)
 
-/* Loggable variables */
+/**
+ * @brief All tests passed when booting
+ */
+PARAM_ADD_CORE(PARAM_INT8 | PARAM_RONLY, selftestPassed, &selftestPassed)
+
+/**
+ * @brief Set to nonzero to trigger dump of assert information to the log.
+ */
+PARAM_ADD(PARAM_UINT8, assertInfo, &dumpAssertInfo)
+
+/**
+ * @brief Test util for log and param. This param sets the value of the sys.testLogParam log variable.
+ *
+ */
+PARAM_ADD(PARAM_UINT8, testLogParam, &testLogParam)
+
+/**
+ * @brief Set to non-zero to trigger a failed assert, useful for debugging
+ *
+ */
+PARAM_ADD_WITH_CALLBACK(PARAM_UINT8, doAssert, &doAssert, doAssertCallback)
+
+
+PARAM_GROUP_STOP(system)
+
+/**
+ *  System loggable variables to check different system states.
+ */
 LOG_GROUP_START(sys)
-LOG_ADD(LOG_INT8, canfly, &canFly)
+/**
+ * @brief Test util for log and param. The value is set through the system.testLogParam parameter
+ */
+LOG_ADD(LOG_INT8, testLogParam, &testLogParam)
+
 LOG_GROUP_STOP(sys)

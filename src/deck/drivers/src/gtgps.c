@@ -7,7 +7,7 @@
  *
  * Crazyflie control firmware
  *
- * Copyright (C) 2011-2012 Bitcraze AB
+ * Copyright (C) 2011-2021 Bitcraze AB
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -95,7 +95,7 @@ static MeasData m;
 
 // Only use on 0-terminated strings!
 static int skip_to_next(char ** sp, const char ch) {
-  int steps;
+  int steps=0;
   while (ch != 0 && (**sp) != ch) {
     (*sp)++;
     steps++;
@@ -282,8 +282,8 @@ static void gtgpsInit(DeckInfo *info)
   DEBUG_PRINT("Enabling reading from GlobalTop GPS\n");
   uart1Init(9600);
 
-  xTaskCreate(gtgpsTask, "GTGPS",
-              configMINIMAL_STACK_SIZE, NULL, /*priority*/1, NULL);
+  xTaskCreate(gtgpsTask, GTGPS_DECK_TASK_NAME,
+              GTGPS_DECK_TASK_STACKSIZE, NULL, GTGPS_DECK_TASK_PRI, NULL);
 
   isInit = true;
 }
@@ -303,8 +303,8 @@ static const DeckDriver gtgps_deck = {
   .pid = 0x07,
   .name = "bcGTGPS",
 
-  .usedPeriph = 0,
-  .usedGpio = 0,               // FIXME: Edit the used GPIOs
+  .usedGpio = 0,
+  .usedPeriph = DECK_USING_UART1,
 
   .init = gtgpsInit,
   .test = gtgpsTest,

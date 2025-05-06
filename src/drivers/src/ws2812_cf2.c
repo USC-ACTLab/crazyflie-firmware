@@ -35,6 +35,8 @@
 #include "FreeRTOS.h"
 #include "semphr.h"
 
+#include "autoconf.h"
+
 //#define TIM1_CCR1_Address 0x40012C34	// physical memory address of Timer 3 CCR1 register
 
 static TIM_TimeBaseInitTypeDef  TIM_TimeBaseStructure;
@@ -110,9 +112,10 @@ void ws2812Init(void)
 	/* DMA clock enable */
 	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_DMA1, ENABLE);
 
-	/* DMA1 Channel2 Config */
+	/* DMA1 Channel5 Config TM */
 	DMA_DeInit(DMA1_Stream5);
 
+	ASSERT_DMA_SAFE(led_dma.buffer);
   // USART TX DMA Channel Config
   DMA_InitStructure.DMA_PeripheralBaseAddr = (uint32_t)&TIM3->CCR2;
   DMA_InitStructure.DMA_Memory0BaseAddr = (uint32_t)led_dma.buffer;    // this is the buffer memory
@@ -132,10 +135,12 @@ void ws2812Init(void)
 	DMA_Init(DMA1_Stream5, &DMA_InitStructure);
 
   NVIC_InitStructure.NVIC_IRQChannel = DMA1_Stream5_IRQn;
-  NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = NVIC_LOW_PRI;
+  NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = NVIC_WS2812_PRI;
   NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0;
   NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
   NVIC_Init(&NVIC_InitStructure);
+
+  vSemaphoreCreateBinary(allLedDone);
 
   DMA_ITConfig(DMA1_Stream5, DMA_IT_TC, ENABLE);
   DMA_ITConfig(DMA1_Stream5, DMA_IT_HT, ENABLE);
@@ -143,7 +148,6 @@ void ws2812Init(void)
 	/* TIM3 CC2 DMA Request enable */
 	TIM_DMACmd(TIM3, TIM_DMA_CC2, ENABLE);
 
-	vSemaphoreCreateBinary(allLedDone);
 
 }
 
@@ -213,6 +217,8 @@ void ws2812DmaIsr(void)
     	DMA_Cmd(DMA1_Stream5, DISABLE);
     }
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Waddress-of-packed-member"
     if (DMA_GetITStatus(DMA1_Stream5, DMA_IT_HTIF5))
     {
       DMA_ClearITPendingBit(DMA1_Stream5, DMA_IT_HTIF5);
@@ -224,6 +230,7 @@ void ws2812DmaIsr(void)
       DMA_ClearITPendingBit(DMA1_Stream5, DMA_IT_TCIF5);
       buffer = led_dma.end;
     }
+#pragma GCC diagnostic pop
 
     for(i=0; (i<LED_PER_HALF) && (current_led<total_led+2); i++, current_led++) {
       if (current_led<total_led)
@@ -241,3 +248,10 @@ void ws2812DmaIsr(void)
 	    total_led = 0;
     }
 }
+
+#if  !defined(CONFIG_DECK_USD_USE_ALT_PINS_AND_SPI) && !defined(CONFIG_MOTORS_ESC_PROTOCOL_DSHOT)
+void __attribute__((used)) DMA1_Stream5_IRQHandler(void)
+{
+  ws2812DmaIsr();
+}
+#endif

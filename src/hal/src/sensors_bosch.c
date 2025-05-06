@@ -39,9 +39,6 @@
 
 #include "imu.h"
 
-#include "zranger.h"
-#include "zranger2.h"
-
 #include "FreeRTOS.h"
 #include "semphr.h"
 #include "task.h"
@@ -63,6 +60,8 @@
 #include "bmp280.h"
 #include "bmp3.h"
 #include "bstdr_comm_support.h"
+#include "static_mem.h"
+#include "estimator.h"
 
 #define SENSORS_READ_RATE_HZ            1000
 #define SENSORS_STARTUP_TIME_MS         1000
@@ -152,14 +151,22 @@ static struct bmp280_t bmp280Dev;
 static struct bmm150_dev bmm150Dev;
 
 static xQueueHandle accelPrimDataQueue;
+STATIC_MEM_QUEUE_ALLOC(accelPrimDataQueue, 1, sizeof(Axis3f));
 static xQueueHandle gyroPrimDataQueue;
+STATIC_MEM_QUEUE_ALLOC(gyroPrimDataQueue, 1, sizeof(Axis3f));
 #ifdef LOG_SEC_IMU
 static xQueueHandle accelSecDataQueue;
+STATIC_MEM_QUEUE_ALLOC(accelSecDataQueue, 1, sizeof(Axis3f));
 static xQueueHandle gyroSecDataQueue;
+STATIC_MEM_QUEUE_ALLOC(gyroSecDataQueue, 1, sizeof(Axis3f));
 #endif
 static xQueueHandle baroPrimDataQueue;
+STATIC_MEM_QUEUE_ALLOC(baroPrimDataQueue, 1, sizeof(Axis3f));
 static xQueueHandle magPrimDataQueue;
+STATIC_MEM_QUEUE_ALLOC(magPrimDataQueue, 1, sizeof(baro_t));
+
 static xSemaphoreHandle dataReady;
+static StaticSemaphore_t dataReadyBuffer;
 
 static bool isInit = false;
 static bool allSensorsAreCalibrated = false;
@@ -173,10 +180,10 @@ static bool isMagnetometerPresent = false;
 static uint8_t baroMeasDelayMin = SENSORS_DELAY_BARO;
 
 // Pre-calculated values for accelerometer alignment
-float cosPitch;
-float sinPitch;
-float cosRoll;
-float sinRoll;
+static float cosPitch;
+static float sinPitch;
+static float cosRoll;
+static float sinRoll;
 
 static void sensorsDeviceInit(void);
 static void sensorsTaskInit(void);
@@ -196,6 +203,8 @@ static void sensorsBiasMalloc(BiasObj* bias);
 static void sensorsBiasFree(BiasObj* bias);
 static void sensorsBiasBufPtrIncrement(BiasObj* bias);
 
+STATIC_MEM_TASK_ALLOC(sensorsTask, SENSORS_TASK_STACKSIZE);
+
 void sensorsBoschInit(void)
 {
   if (isInit)
@@ -203,7 +212,7 @@ void sensorsBoschInit(void)
       return;
     }
 
-  dataReady = xSemaphoreCreateBinary();
+  dataReady = xSemaphoreCreateBinaryStatic(&dataReadyBuffer);
 
   sensorsDeviceInit();
   sensorsTaskInit();
@@ -378,17 +387,16 @@ static void sensorsDeviceInit(void)
 
 static void sensorsTaskInit(void)
 {
-  accelPrimDataQueue = xQueueCreate(1, sizeof(Axis3f));
-  gyroPrimDataQueue = xQueueCreate(1, sizeof(Axis3f));
+  accelPrimDataQueue = STATIC_MEM_QUEUE_CREATE(accelPrimDataQueue);
+  gyroPrimDataQueue = STATIC_MEM_QUEUE_CREATE(gyroPrimDataQueue);
 #ifdef LOG_SEC_IMU
-  accelSecDataQueue = xQueueCreate(1, sizeof(Axis3f));
-  gyroSecDataQueue = xQueueCreate(1, sizeof(Axis3f));
+  accelSecDataQueue = STATIC_MEM_QUEUE_CREATE(accelSecDataQueue);
+  gyroSecDataQueue= STATIC_MEM_QUEUE_CREATE(gyroSecDataQueue);
 #endif
-  magPrimDataQueue = xQueueCreate(1, sizeof(Axis3f));
-  baroPrimDataQueue = xQueueCreate(1, sizeof(baro_t));
+  magPrimDataQueue = STATIC_MEM_QUEUE_CREATE(magPrimDataQueue);
+  baroPrimDataQueue = STATIC_MEM_QUEUE_CREATE(baroPrimDataQueue);
 
-  xTaskCreate(sensorsTask, SENSORS_TASK_NAME, SENSORS_TASK_STACKSIZE,
-              NULL, SENSORS_TASK_PRI, NULL);
+  STATIC_MEM_TASK_CREATE(sensorsTask, sensorsTask, SENSORS_TASK_NAME, NULL, SENSORS_TASK_PRI);
 }
 
 static void sensorsGyroGet(Axis3i16* dataOut, uint8_t device) {
@@ -477,6 +485,8 @@ sensorsAccelCalibrate(BiasObj* accel, BiasObj* gyro, uint8_t type) {
 
 static void sensorsTask(void *param)
 {
+  measurement_t measurement;
+
   systemWaitStart();
 
   uint32_t lastWakeTime = xTaskGetTickCount();
@@ -532,7 +542,7 @@ static void sensorsTask(void *param)
             {
               // soundSetEffect(SND_CALIB);
               DEBUG_PRINT("Sensor calibration [OK].\n");
-              ledseqRun(SYS_LED, seq_calibrated);
+              ledseqRun(&seq_calibrated);
               allSensorsAreCalibrated= true;
             }
         }
@@ -637,10 +647,23 @@ static void sensorsTask(void *param)
             {
               bmp280_read_pressure_temperature(&v_pres_u32, &v_temp_s32);
               sensorsScaleBaro(baro280, (float)v_pres_u32, (float)v_temp_s32/100.0f);
+
+              measurement.type = MeasurementTypeBarometer;
+              measurement.data.barometer.baro = sensors.baro;
+              estimatorEnqueue(&measurement);
+
               baroMeasDelay = baroMeasDelayMin;
             }
         }
+
+      measurement.type = MeasurementTypeAcceleration;
+      measurement.data.acceleration.acc = sensors.acc;
+      estimatorEnqueue(&measurement);
       xQueueOverwrite(accelPrimDataQueue, &sensors.acc);
+
+      measurement.type = MeasurementTypeGyroscope;
+      measurement.data.gyroscope.gyro = sensors.gyro;
+      estimatorEnqueue(&measurement);
       xQueueOverwrite(gyroPrimDataQueue, &sensors.gyro);
 
 #ifdef LOG_SEC_IMU
@@ -844,15 +867,12 @@ bool sensorsBoschReadBaro(baro_t *baro)
   return (pdTRUE == xQueueReceive(baroPrimDataQueue, baro, 0));
 }
 
-void sensorsBoschAcquire(sensorData_t *sensors, const uint32_t tick)
+void sensorsBoschAcquire(sensorData_t *sensors)
 {
   sensorsReadGyro(&sensors->gyro);
   sensorsReadAcc(&sensors->acc);
   sensorsReadMag(&sensors->mag);
   sensorsReadBaro(&sensors->baro);
-  if (!zRangerReadRange(&sensors->zrange, tick)) {
-    zRanger2ReadRange(&sensors->zrange, tick);
-  }
 #ifdef LOG_SEC_IMU
   sensorsReadGyroSec(&sensors->gyroSec);
   sensorsReadAccSec(&sensors->accSec);

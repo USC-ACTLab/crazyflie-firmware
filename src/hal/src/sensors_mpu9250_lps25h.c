@@ -7,7 +7,7 @@
  *
  * Crazyflie control firmware
  *
- * Copyright (C) 2011-2018 Bitcraze AB
+ * Copyright (C) 2011-2021 Bitcraze AB
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -34,8 +34,6 @@
 #include "lps25h.h"
 #include "mpu6500.h"
 #include "ak8963.h"
-#include "zranger.h"
-#include "zranger2.h"
 
 #include "FreeRTOS.h"
 #include "semphr.h"
@@ -51,12 +49,9 @@
 #include "ledseq.h"
 #include "sound.h"
 #include "filter.h"
-
-/**
- * Enable 250Hz digital LPF mode. However does not work with
- * multiple slave reading through MPU9250 (MAG and BARO), only single for some reason.
- */
-//#define SENSORS_MPU6500_DLPF_256HZ
+#include "static_mem.h"
+#include "estimator.h"
+#include "platform_defaults.h"
 
 #define SENSORS_ENABLE_PRESSURE_LPS25H
 //#define GYRO_ADD_RAW_AND_VARIANCE_LOG_VALUES
@@ -89,7 +84,7 @@
 // Number of samples used in variance calculation. Changing this effects the threshold
 #define SENSORS_NBR_OF_BIAS_SAMPLES     1024
 // Variance threshold to take zero bias for gyro
-#define GYRO_VARIANCE_BASE          5000
+#define GYRO_VARIANCE_BASE          50
 #define GYRO_VARIANCE_THRESHOLD_X   (GYRO_VARIANCE_BASE)
 #define GYRO_VARIANCE_THRESHOLD_Y   (GYRO_VARIANCE_BASE)
 #define GYRO_VARIANCE_THRESHOLD_Z   (GYRO_VARIANCE_BASE)
@@ -106,19 +101,26 @@ typedef struct
 } BiasObj;
 
 static xQueueHandle accelerometerDataQueue;
+STATIC_MEM_QUEUE_ALLOC(accelerometerDataQueue, 1, sizeof(Axis3f));
 static xQueueHandle gyroDataQueue;
+STATIC_MEM_QUEUE_ALLOC(gyroDataQueue, 1, sizeof(Axis3f));
 static xQueueHandle magnetometerDataQueue;
+STATIC_MEM_QUEUE_ALLOC(magnetometerDataQueue, 1, sizeof(Axis3f));
 static xQueueHandle barometerDataQueue;
+STATIC_MEM_QUEUE_ALLOC(barometerDataQueue, 1, sizeof(baro_t));
+
 static xSemaphoreHandle sensorsDataReady;
+static StaticSemaphore_t sensorsDataReadyBuffer;
 static xSemaphoreHandle dataReady;
+static StaticSemaphore_t dataReadyBuffer;
 
 static bool isInit = false;
 static sensorData_t sensorData;
-static uint64_t imuIntTimestamp;
+static volatile uint64_t imuIntTimestamp;
 
 static Axis3i16 gyroRaw;
 static Axis3i16 accelRaw;
-static BiasObj gyroBiasRunning;
+NO_DMA_CCM_SAFE_ZERO_INIT static BiasObj gyroBiasRunning;
 static Axis3f  gyroBias;
 #if defined(SENSORS_GYRO_BIAS_CALCULATE_STDDEV) && defined (GYRO_BIAS_LIGHT_WEIGHT)
 static Axis3f  gyroBiasStdDev;
@@ -141,11 +143,18 @@ static bool isMpu6500TestPassed = false;
 static bool isAK8963TestPassed = false;
 static bool isLPS25HTestPassed = false;
 
+// IMU alignment Euler angles
+static float imuPhi = IMU_PHI;
+static float imuTheta = IMU_THETA;
+static float imuPsi = IMU_PSI;
+
+static float R[3][3];
+
 // Pre-calculated values for accelerometer alignment
-float cosPitch;
-float sinPitch;
-float cosRoll;
-float sinRoll;
+static float cosPitch;
+static float sinPitch;
+static float cosRoll;
+static float sinRoll;
 
 // This buffer needs to hold data from all sensors
 static uint8_t buffer[SENSORS_MPU6500_BUFF_LEN + SENSORS_MAG_BUFF_LEN + SENSORS_BARO_BUFF_LEN] = {0};
@@ -166,7 +175,10 @@ static void sensorsCalculateVarianceAndMean(BiasObj* bias, Axis3f* varOut, Axis3
 static void sensorsCalculateBiasMean(BiasObj* bias, Axis3i32* meanOut);
 static void sensorsAddBiasValue(BiasObj* bias, int16_t x, int16_t y, int16_t z);
 static bool sensorsFindBiasValue(BiasObj* bias);
+static void sensorsAlignToAirframe(Axis3f* in, Axis3f* out);
 static void sensorsAccAlignToGravity(Axis3f* in, Axis3f* out);
+
+STATIC_MEM_TASK_ALLOC(sensorsTask, SENSORS_TASK_STACKSIZE);
 
 bool sensorsMpu9250Lps25hReadGyro(Axis3f *gyro)
 {
@@ -188,15 +200,12 @@ bool sensorsMpu9250Lps25hReadBaro(baro_t *baro)
   return (pdTRUE == xQueueReceive(barometerDataQueue, baro, 0));
 }
 
-void sensorsMpu9250Lps25hAcquire(sensorData_t *sensors, const uint32_t tick)
+void sensorsMpu9250Lps25hAcquire(sensorData_t *sensors)
 {
   sensorsReadGyro(&sensors->gyro);
   sensorsReadAcc(&sensors->acc);
   sensorsReadMag(&sensors->mag);
   sensorsReadBaro(&sensors->baro);
-  if (!zRangerReadRange(&sensors->zrange, tick)) {
-    zRanger2ReadRange(&sensors->zrange, tick);
-  }
   sensors->interruptTimestamp = sensorData.interruptTimestamp;
 }
 
@@ -206,6 +215,8 @@ bool sensorsMpu9250Lps25hAreCalibrated() {
 
 static void sensorsTask(void *param)
 {
+  measurement_t measurement;
+
   systemWaitStart();
 
   sensorsSetupSlaveRead();
@@ -233,7 +244,14 @@ static void sensorsTask(void *param)
                   SENSORS_MPU6500_BUFF_LEN + SENSORS_MAG_BUFF_LEN : SENSORS_MPU6500_BUFF_LEN]));
       }
 
+      measurement.type = MeasurementTypeAcceleration;
+      measurement.data.acceleration.acc = sensorData.acc;
+      estimatorEnqueue(&measurement);
       xQueueOverwrite(accelerometerDataQueue, &sensorData.acc);
+
+      measurement.type = MeasurementTypeGyroscope;
+      measurement.data.gyroscope.gyro = sensorData.gyro;
+      estimatorEnqueue(&measurement);
       xQueueOverwrite(gyroDataQueue, &sensorData.gyro);
       if (isMagnetometerPresent)
       {
@@ -241,6 +259,9 @@ static void sensorsTask(void *param)
       }
       if (isBarometerPresent)
       {
+        measurement.type = MeasurementTypeBarometer;
+        measurement.data.barometer.baro = sensorData.baro;
+        estimatorEnqueue(&measurement);
         xQueueOverwrite(barometerDataQueue, &sensorData.baro);
       }
 
@@ -289,6 +310,8 @@ void processMagnetometerMeasurements(const uint8_t *buffer)
 
 void processAccGyroMeasurements(const uint8_t *buffer)
 {
+  Axis3f gyroScaledIMU;
+  Axis3f accScaledIMU;
   Axis3f accScaled;
   // Note the ordering to correct the rotated 90º IMU coordinate system
   accelRaw.y = (((int16_t) buffer[0]) << 8) | buffer[1];
@@ -309,14 +332,16 @@ void processAccGyroMeasurements(const uint8_t *buffer)
      processAccScale(accelRaw.x, accelRaw.y, accelRaw.z);
   }
 
-  sensorData.gyro.x = -(gyroRaw.x - gyroBias.x) * SENSORS_DEG_PER_LSB_CFG;
-  sensorData.gyro.y =  (gyroRaw.y - gyroBias.y) * SENSORS_DEG_PER_LSB_CFG;
-  sensorData.gyro.z =  (gyroRaw.z - gyroBias.z) * SENSORS_DEG_PER_LSB_CFG;
+  gyroScaledIMU.x = -(gyroRaw.x - gyroBias.x) * SENSORS_DEG_PER_LSB_CFG;
+  gyroScaledIMU.y =  (gyroRaw.y - gyroBias.y) * SENSORS_DEG_PER_LSB_CFG;
+  gyroScaledIMU.z =  (gyroRaw.z - gyroBias.z) * SENSORS_DEG_PER_LSB_CFG;
+  sensorsAlignToAirframe(&gyroScaledIMU, &sensorData.gyro);
   applyAxis3fLpf((lpf2pData*)(&gyroLpf), &sensorData.gyro);
 
-  accScaled.x = -(accelRaw.x) * SENSORS_G_PER_LSB_CFG / accScale;
-  accScaled.y =  (accelRaw.y) * SENSORS_G_PER_LSB_CFG / accScale;
-  accScaled.z =  (accelRaw.z) * SENSORS_G_PER_LSB_CFG / accScale;
+  accScaledIMU.x = -(accelRaw.x) * SENSORS_G_PER_LSB_CFG / accScale;
+  accScaledIMU.y =  (accelRaw.y) * SENSORS_G_PER_LSB_CFG / accScale;
+  accScaledIMU.z =  (accelRaw.z) * SENSORS_G_PER_LSB_CFG / accScale;
+  sensorsAlignToAirframe(&accScaledIMU, &accScaled);
   sensorsAccAlignToGravity(&accScaled, &sensorData.acc);
   applyAxis3fLpf((lpf2pData*)(&accLpf), &sensorData.acc);
 }
@@ -327,9 +352,9 @@ static void sensorsDeviceInit(void)
   isBarometerPresent = false;
 
   // Wait for sensors to startup
-  while (xTaskGetTickCount() < 1000);
+  TickType_t xStartTime = 0;
+  vTaskDelayUntil(&xStartTime, T2M(1000));
 
-  i2cdevInit(I2C3_DEV);
   mpu6500Init(I2C3_DEV);
   if (mpu6500TestConnection() == true)
   {
@@ -363,13 +388,6 @@ static void sensorsDeviceInit(void)
   // Set accelerometer digital low-pass bandwidth
   mpu6500SetAccelDLPF(MPU6500_ACCEL_DLPF_BW_41);
 
-#if SENSORS_MPU6500_DLPF_256HZ
-  // 256Hz digital low-pass filter only works with little vibrations
-  // Set output rate (15): 8000 / (1 + 7) = 1000Hz
-  mpu6500SetRate(7);
-  // Set digital low-pass bandwidth
-  mpu6500SetDLPFMode(MPU6500_DLPF_BW_256);
-#else
   // To low DLPF bandwidth might cause instability and decrease agility
   // but it works well for handling vibrations and unbalanced propellers
   // Set output rate (1): 1000 / (1 + 0) = 1000Hz
@@ -382,7 +400,6 @@ static void sensorsDeviceInit(void)
     lpf2pInit(&gyroLpf[i], 1000, GYRO_LPF_CUTOFF_FREQ);
     lpf2pInit(&accLpf[i],  1000, ACCEL_LPF_CUTOFF_FREQ);
   }
-#endif
 
 
 #ifdef SENSORS_ENABLE_MAG_AK8963
@@ -414,24 +431,17 @@ static void sensorsDeviceInit(void)
   }
 #endif
 
-  cosPitch = cosf(configblockGetCalibPitch() * (float) M_PI/180);
-  sinPitch = sinf(configblockGetCalibPitch() * (float) M_PI/180);
-  cosRoll = cosf(configblockGetCalibRoll() * (float) M_PI/180);
-  sinRoll = sinf(configblockGetCalibRoll() * (float) M_PI/180);
+  cosPitch = cosf(configblockGetCalibPitch() * (float) M_PI / 180);
+  sinPitch = sinf(configblockGetCalibPitch() * (float) M_PI / 180);
+  cosRoll = cosf(configblockGetCalibRoll() * (float) M_PI / 180);
+  sinRoll = sinf(configblockGetCalibRoll() * (float) M_PI / 180);
 }
 
 
 static void sensorsSetupSlaveRead(void)
 {
   // Now begin to set up the slaves
-#ifdef SENSORS_MPU6500_DLPF_256HZ
-  // As noted in registersheet 4.4: "Data should be sampled at or above sample rate;
-  // SMPLRT_DIV is only used for 1kHz internal sampling." Slowest update rate is then 500Hz.
-  mpu6500SetSlave4MasterDelay(15); // read slaves at 500Hz = (8000Hz / (1 + 15))
-#else
   mpu6500SetSlave4MasterDelay(9); // read slaves at 100Hz = (500Hz / (1 + 4))
-#endif
-
   mpu6500SetI2CBypassEnabled(false);
   mpu6500SetWaitForExternalSensorEnabled(true); // the slave data isn't so important for the state estimation
   mpu6500SetInterruptMode(0); // active high
@@ -481,12 +491,12 @@ static void sensorsSetupSlaveRead(void)
 
 static void sensorsTaskInit(void)
 {
-  accelerometerDataQueue = xQueueCreate(1, sizeof(Axis3f));
-  gyroDataQueue = xQueueCreate(1, sizeof(Axis3f));
-  magnetometerDataQueue = xQueueCreate(1, sizeof(Axis3f));
-  barometerDataQueue = xQueueCreate(1, sizeof(baro_t));
+  accelerometerDataQueue = STATIC_MEM_QUEUE_CREATE(accelerometerDataQueue);
+  gyroDataQueue = STATIC_MEM_QUEUE_CREATE(gyroDataQueue);
+  magnetometerDataQueue = STATIC_MEM_QUEUE_CREATE(magnetometerDataQueue);
+  barometerDataQueue = STATIC_MEM_QUEUE_CREATE(barometerDataQueue);
 
-  xTaskCreate(sensorsTask, SENSORS_TASK_NAME, SENSORS_TASK_STACKSIZE, NULL, SENSORS_TASK_PRI, NULL);
+  STATIC_MEM_TASK_CREATE(sensorsTask, sensorsTask, SENSORS_TASK_NAME, NULL, SENSORS_TASK_PRI);
 }
 
 static void sensorsInterruptInit(void)
@@ -494,8 +504,8 @@ static void sensorsInterruptInit(void)
   GPIO_InitTypeDef GPIO_InitStructure;
   EXTI_InitTypeDef EXTI_InitStructure;
 
-  sensorsDataReady = xSemaphoreCreateBinary();
-  dataReady = xSemaphoreCreateBinary();
+  sensorsDataReady = xSemaphoreCreateBinaryStatic(&sensorsDataReadyBuffer);
+  dataReady = xSemaphoreCreateBinaryStatic(&dataReadyBuffer);
 
   // FSYNC "shall not be floating, must be set high or low by the MCU"
   GPIO_InitStructure.GPIO_Pin = GPIO_Pin_14;
@@ -668,7 +678,7 @@ static bool processGyroBias(int16_t gx, int16_t gy, int16_t gz, Axis3f *gyroBias
     if (gyroBiasRunning.isBiasValueFound)
     {
       soundSetEffect(SND_CALIB);
-      ledseqRun(SYS_LED, seq_calibrated);
+      ledseqRun(&seq_calibrated);
     }
   }
 
@@ -705,13 +715,14 @@ static void sensorsCalculateVarianceAndMean(BiasObj* bias, Axis3f* varOut, Axis3
     sumSq[2] += bias->buffer[i].z * bias->buffer[i].z;
   }
 
-  varOut->x = (sumSq[0] - ((int64_t)sum[0] * sum[0]) / SENSORS_NBR_OF_BIAS_SAMPLES);
-  varOut->y = (sumSq[1] - ((int64_t)sum[1] * sum[1]) / SENSORS_NBR_OF_BIAS_SAMPLES);
-  varOut->z = (sumSq[2] - ((int64_t)sum[2] * sum[2]) / SENSORS_NBR_OF_BIAS_SAMPLES);
 
-  meanOut->x = (float)sum[0] / SENSORS_NBR_OF_BIAS_SAMPLES;
-  meanOut->y = (float)sum[1] / SENSORS_NBR_OF_BIAS_SAMPLES;
-  meanOut->z = (float)sum[2] / SENSORS_NBR_OF_BIAS_SAMPLES;
+  meanOut->x = (float) sum[0] / SENSORS_NBR_OF_BIAS_SAMPLES;
+  meanOut->y = (float) sum[1] / SENSORS_NBR_OF_BIAS_SAMPLES;
+  meanOut->z = (float) sum[2] / SENSORS_NBR_OF_BIAS_SAMPLES;
+
+  varOut->x = sumSq[0] / SENSORS_NBR_OF_BIAS_SAMPLES - meanOut->x * meanOut->x;
+  varOut->y = sumSq[1] / SENSORS_NBR_OF_BIAS_SAMPLES - meanOut->y * meanOut->y;
+  varOut->z = sumSq[2] / SENSORS_NBR_OF_BIAS_SAMPLES - meanOut->z * meanOut->z;
 }
 
 /**
@@ -853,6 +864,39 @@ void __attribute__((used)) EXTI13_Callback(void)
 }
 
 /**
+ * Align the sensors to the Airframe axes
+ */
+static void sensorsAlignToAirframe(Axis3f* in, Axis3f* out)
+{
+  // IMU alignment
+  static float sphi, cphi, stheta, ctheta, spsi, cpsi;
+
+  sphi   = sinf(imuPhi * (float) M_PI / 180);
+  cphi   = cosf(imuPhi * (float) M_PI / 180);
+  stheta = sinf(imuTheta * (float) M_PI / 180);
+  ctheta = cosf(imuTheta * (float) M_PI / 180);
+  spsi   = sinf(imuPsi * (float) M_PI / 180);
+  cpsi   = cosf(imuPsi * (float) M_PI / 180);
+
+  // tait-bryan passive rotation in order: yaw, psi (1) -> pitch, theta (2) ->  roll, phi (3) [https://en.wikipedia.org/wiki/Euler_angles#cite_note-3]
+  // mathematically R = R_x(phi)^T . R_y(theta)^T . R_z(psi)^T  [http://eecs.qmul.ac.uk/~gslabaugh/publications/euler.pdf]
+  // transpose because it's a passive rotation not active [https://en.wikipedia.org/wiki/Active_and_passive_transformation]
+  R[0][0] = ctheta * cpsi;
+  R[0][1] = ctheta * spsi;
+  R[0][2] = -stheta;
+  R[1][0] = sphi * stheta * cpsi - cphi * spsi;
+  R[1][1] = sphi * stheta * spsi + cphi * cpsi;
+  R[1][2] = sphi * ctheta;
+  R[2][0] = cphi * stheta * cpsi + sphi * spsi;
+  R[2][1] = cphi * stheta * spsi - sphi * cpsi;
+  R[2][2] = cphi * ctheta;
+
+  out->x = in->x*R[0][0] + in->y*R[0][1] + in->z*R[0][2];
+  out->y = in->x*R[1][0] + in->y*R[1][1] + in->z*R[1][2];
+  out->z = in->x*R[2][0] + in->y*R[2][1] + in->z*R[2][2];
+}
+
+/**
  * Compensate for a miss-aligned accelerometer. It uses the trim
  * data gathered from the UI and written in the config-block to
  * rotate the accelerometer to be aligned with gravity.
@@ -917,13 +961,56 @@ LOG_ADD(LOG_FLOAT, zVariance, &gyroBiasRunning.variance.z)
 LOG_GROUP_STOP(gyro)
 #endif
 
+/**
+ * An inertial measurement unit (IMU) is an electronic device that measures and
+ * reports a body's specific force, angular rate, and sometimes the orientation
+ * of the body, using a combination of accelerometers, gyroscopes, and
+ * sometimes magnetometers.
+ */
 PARAM_GROUP_START(imu_sensors)
-PARAM_ADD(PARAM_UINT8 | PARAM_RONLY, HMC5883L, &isMagnetometerPresent)
-PARAM_ADD(PARAM_UINT8 | PARAM_RONLY, MS5611, &isBarometerPresent) // TODO: Rename MS5611 to LPS25H. Client needs to be updated at the same time.
+
+/**
+ * @brief Nonzero if AK8963 magnetometer is present
+ */
+PARAM_ADD(PARAM_UINT8 | PARAM_RONLY, AK8963, &isMagnetometerPresent)
+
+/**
+ * @brief Nonzero if LPS25H barometer is present
+ */
+PARAM_ADD(PARAM_UINT8 | PARAM_RONLY, LPS25H, &isBarometerPresent)
+
 PARAM_GROUP_STOP(imu_sensors)
 
 PARAM_GROUP_START(imu_tests)
+
+/**
+ * @brief Nonzero if the MPU6500 self-test passes
+ */
 PARAM_ADD(PARAM_UINT8 | PARAM_RONLY, MPU6500, &isMpu6500TestPassed)
-PARAM_ADD(PARAM_UINT8 | PARAM_RONLY, HMC5883L, &isAK8963TestPassed)
-PARAM_ADD(PARAM_UINT8 | PARAM_RONLY, MS5611, &isLPS25HTestPassed) // TODO: Rename MS5611 to LPS25H. Client needs to be updated at the same time.
+
+/**
+ * @brief Nonzero if the AK8963 self-test passes
+ */
+PARAM_ADD(PARAM_UINT8 | PARAM_RONLY, AK8963, &isAK8963TestPassed)
+
+/**
+ * @brief Nonzero if the LPS25H self-test passes
+ */
+PARAM_ADD(PARAM_UINT8 | PARAM_RONLY, LPS25H, &isLPS25HTestPassed)
+
+/**
+ * @brief Euler angle Phi defining IMU orientation on the airframe (in degrees)
+ */
+PARAM_ADD(PARAM_FLOAT | PARAM_PERSISTENT, imuPhi, &imuPhi)
+
+/**
+ * @brief Euler angle Theta defining IMU orientation on the airframe (in degrees)
+ */
+PARAM_ADD(PARAM_FLOAT | PARAM_PERSISTENT, imuTheta, &imuTheta)
+
+/**
+ * @brief Euler angle Psi defining IMU orientation on the airframe (in degrees)
+ */
+PARAM_ADD(PARAM_FLOAT | PARAM_PERSISTENT, imuPsi, &imuPsi)
+
 PARAM_GROUP_STOP(imu_tests)

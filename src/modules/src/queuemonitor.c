@@ -28,7 +28,7 @@
 
 #include "queuemonitor.h"
 
-#ifdef DEBUG_QUEUE_MONITOR
+#ifdef CONFIG_DEBUG_QUEUE_MONITOR
 
 #include <stdbool.h>
 #include "timers.h"
@@ -53,6 +53,7 @@ typedef struct
 static Data data[MAX_NR_OF_QUEUES];
 
 static xTimerHandle timer;
+static StaticTimer_t timerBuffer;
 static unsigned char nrOfQueues = 1; // Unregistered queues will end up at 0
 static bool initialized = false;
 
@@ -69,8 +70,8 @@ unsigned char ucQueueGetQueueNumber( xQueueHandle xQueue );
 
 void queueMonitorInit() {
   ASSERT(!initialized);
-  timer = xTimerCreate( "queueMonitorTimer", TIMER_PERIOD,
-    pdTRUE, NULL, timerHandler );
+  timer = xTimerCreateStatic( "queueMonitorTimer", TIMER_PERIOD,
+    pdTRUE, NULL, timerHandler, &timerBuffer);
   xTimerStart(timer, 100);
 
   data[0].fileName = "Na";
@@ -170,4 +171,4 @@ static void timerHandler(xTimerHandle timer) {
   debugPrint();
 }
 
-#endif // DEBUG_QUEUE_MONITOR
+#endif // CONFIG_DEBUG_QUEUE_MONITOR

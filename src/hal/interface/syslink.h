@@ -1,6 +1,6 @@
 /*
- *    ||          ____  _ __                           
- * +------+      / __ )(_) /_______________ _____  ___ 
+ *    ||          ____  _ __
+ * +------+      / __ )(_) /_______________ _____  ___
  * | 0xBC |     / __  / / __/ ___/ ___/ __ `/_  / / _ \
  * +------+    / /_/ / / /_/ /__/ /  / /_/ / / /_/  __/
  *  ||  ||    /_____/_/\__/\___/_/   \__,_/ /___/\___/
@@ -29,7 +29,7 @@
 
 #include <stdbool.h>
 
-#define SYSLINK_MTU 32
+#define SYSLINK_MTU 64
 
 #define CRTP_START_BYTE  0xAA
 #define SYSLINK_START_BYTE1 0xBC
@@ -47,6 +47,9 @@
 #define SYSLINK_RADIO_ADDRESS       0x05
 #define SYSLINK_RADIO_RAW_BROADCAST 0x06
 #define SYSLINK_RADIO_POWER         0x07
+#define SYSLINK_RADIO_P2P           0x08
+#define SYSLINK_RADIO_P2P_ACK       0x09
+#define SYSLINK_RADIO_P2P_BROADCAST 0x0A
 
 #define SYSLINK_PM_GROUP              0x10
 #define SYSLINK_PM_SOURCE             0x10
@@ -54,12 +57,22 @@
 #define SYSLINK_PM_BATTERY_VOLTAGE    0x12
 #define SYSLINK_PM_BATTERY_STATE      0x13
 #define SYSLINK_PM_BATTERY_AUTOUPDATE 0x14
+#define SYSLINK_PM_SHUTDOWN_REQUEST   0x15
+#define SYSLINK_PM_SHUTDOWN_ACK       0x16
+#define SYSLINK_PM_LED_ON             0x17
+#define SYSLINK_PM_LED_OFF            0x18
 
 #define SYSLINK_OW_GROUP    0x20
 #define SYSLINK_OW_SCAN     0x20
 #define SYSLINK_OW_GETINFO  0x21
 #define SYSLINK_OW_READ     0x22
 #define SYSLINK_OW_WRITE    0x23
+
+#define SYSLINK_SYS_GROUP        0x30
+#define SYSLINK_SYS_NRF_VERSION  0x30
+
+#define SYSLINK_DEBUG_GROUP 0xF0
+#define SYSLINK_DEBUG_PROBE 0xF0
 
 typedef struct _SyslinkPacket
 {
@@ -82,6 +95,7 @@ typedef enum
 
 void syslinkInit();
 bool syslinkTest();
+bool isSyslinkUp();
 int syslinkSendPacket(SyslinkPacket *slp);
 
 #endif
