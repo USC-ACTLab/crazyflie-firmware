@@ -501,4 +501,9 @@ config DECK_LOADCELL
     default n
     help
         Enables the support for the NAU7802 loadcell.
-      
+
+config DECK_DOWNWASH
+    bool "Support for downwash deck"
+    default n
+    help
+        Enables the support for the downwash deck.
