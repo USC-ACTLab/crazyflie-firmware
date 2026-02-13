@@ -189,6 +189,7 @@ typedef enum control_mode_e {
   controlModeForceTorque = 1,
   controlModeForce       = 2,
   controlModePWM         = 3, // PWM of each motor within [0..1]
+  controlModeStructure   = 4, // Structure control mode
 } control_mode_t;
 
 typedef struct control_s {
@@ -218,6 +219,9 @@ typedef struct control_s {
 
     // controlModeForce
     float normalizedForces[STABILIZER_NR_OF_MOTORS]; // 0.0 ... 1.0
+
+    // controlModeStructure
+    float structureControl[STABILIZER_NR_OF_MOTORS]; // fij vector
   };
 
   control_mode_t controlMode;

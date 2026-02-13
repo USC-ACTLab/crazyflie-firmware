@@ -47,6 +47,10 @@ config CONTROLLER_LEE
     help
         Use the Lee controller as default
 
+config CONTROLLER_AEROLINK
+    bool "Aerolink controller"
+    help
+        Use the Aerolink controller as default
 endchoice
 
 config CONTROLLER_OOT

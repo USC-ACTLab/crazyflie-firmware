@@ -116,6 +116,10 @@ static void powerDistributionForceTorque(const control_t *control, motors_thrust
   }
 }
 
+static void powerDistributionStructure(const control_t *control, motors_thrust_uncapped_t* motorThrustUncapped) {
+  // to be implemented
+}
+
 /**
  * @brief Allows for direct control of motor power with clipping
  *
@@ -171,6 +175,9 @@ void powerDistribution(const control_t *control, motors_thrust_uncapped_t* motor
       break;
     case controlModePWM:
       powerDistributionPWM(control, motorThrustUncapped);
+      break;
+    case controlModeStructure:
+      powerDistributionStructure(control, motorThrustUncapped);
       break;
     default:
       // Nothing here
