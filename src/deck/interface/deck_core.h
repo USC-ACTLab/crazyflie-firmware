@@ -34,6 +34,9 @@
 
 #include "estimator.h"
 
+/* Forward declaration to avoid circular dependency */
+typedef struct deckDiscoveryBackend_s DeckDiscoveryBackend_t;
+
 /* Maximum number of decks that can be enumerated */
 #define DECK_MAX_COUNT 4
 
@@ -99,6 +102,7 @@ typedef struct deck_driver {
   /* Required system properties */
   StateEstimatorType requiredEstimator;
   bool requiredLowInterferenceRadioMode;
+  bool requiredKalmanEstimatorAttitudeReversionOff;
 
   // Deck memory access definitions
   const struct deckMemDef_s* memoryDef;
@@ -145,12 +149,26 @@ typedef struct deckInfo_s {
 
   TlvArea tlv;
   const DeckDriver *driver;
+
+  /* Track which discovery backend found this deck */
+  const DeckDiscoveryBackend_t *discoveryBackend;
+  /* Backend-specific context pointer, this is private for each backend */
+  void* backendContext;
+
+  /* Generic deck information fields, NULL if not set */
+  char * productName;
+  char * boardRevision;
+
+  uint8_t production_year;
+  uint8_t production_month;
+  uint8_t production_day;
+
 } DeckInfo;
 
 /**
  * @brief Definition of function that is called when a block of a new firmware is uploaded to the deck.
  * The upload will be done in small but continouse pieces.
- * @param address: Address where the buffer should be written. The start of the firmware is at address 0.
+ * @param vAddr: Address where the buffer should be written. The start of the firmware is at address 0.
  * @param len: Buffer length
  * @param buffer: Buffer to write in the firmware memory
  * @param memDef: The memory def for the device the write is related to
@@ -163,7 +181,7 @@ typedef bool (deckMemoryWrite)(const uint32_t vAddr, const uint8_t len, const ui
 /**
  * @brief Definition of function to read the firmware
  *
- * @param addr: Address where the data should be read. The start of the firmware is at address 0.
+ * @param vAddr: Address where the data should be read. The start of the firmware is at address 0.
  * @param len: Length to read.
  * @param buffer: Buffer where to output the data
  *
@@ -175,6 +193,7 @@ typedef bool (deckMemoryRead)(const uint32_t vAddr, const uint8_t len, uint8_t* 
 #define DECK_MEMORY_MASK_STARTED 1
 #define DECK_MEMORY_MASK_UPGRADE_REQUIRED 2
 #define DECK_MEMORY_MASK_BOOT_LOADER_ACTIVE 4
+#define DECK_MEMORY_MASK_SUPPORTS_HOT_RESTART 8
 
 /**
  * @brief Definition of function to query a deck for properties related to memory
@@ -223,15 +242,6 @@ int deckCount(void);
 
 DeckInfo * deckInfo(int i);
 
-/* Key/value area handling */
-bool deckTlvHasElement(TlvArea *tlv, int type);
-
-int deckTlvGetString(TlvArea *tlv, int type, char *string, int maxLength);
-
-char* deckTlvGetBuffer(TlvArea *tlv, int type, int *length);
-
-void deckTlvGetTlv(TlvArea *tlv, int type, TlvArea *output);
-
 /* Defined Types */
 #define DECK_INFO_NAME 1
 #define DECK_INFO_REVISION 2
@@ -254,5 +264,9 @@ const struct deck_driver* deckFindDriverByName(char* name);
 StateEstimatorType deckGetRequiredEstimator();
 
 bool deckGetRequiredLowInterferenceRadioMode();
+bool deckGetRequiredKalmanEstimatorAttitudeReversionOff();
+
+// Including deck-discovery.h here to avoid circular dependency
+#include "deck_discovery.h"
 
 #endif //__DECK_CODE_H__

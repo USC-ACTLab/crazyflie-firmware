@@ -101,6 +101,8 @@
 #define UART2_TASK_PRI            3
 #define CRTP_SRV_TASK_PRI         0
 #define PLATFORM_SRV_TASK_PRI     0
+#define COLORLED_TASK_PRIO        1
+#define WORKER_TASK_PRI           1
 
 // Not compiled
 #if 0
@@ -160,6 +162,8 @@
 #define CPX_TASK_NAME             "CPX"
 #define APP_TASK_NAME             "APP"
 #define FLAPPERDECK_TASK_NAME     "FLAPPERDECK"
+#define COLORLED_TASK_NAME        "COLORLED-DECK"
+#define WORKER_TASK_NAME          "WORKER"
 
 
 //Task stack sizes
@@ -207,6 +211,8 @@
 #define KALMAN_TASK_STACKSIZE           (3 * configMINIMAL_STACK_SIZE)
 #define FLAPPERDECK_TASK_STACKSIZE      (2 * configMINIMAL_STACK_SIZE)
 #define ERROR_UKF_TASK_STACKSIZE        (4 * configMINIMAL_STACK_SIZE)
+#define COLORLED_TASK_STACKSIZE         configMINIMAL_STACK_SIZE
+#define WORKER_TASK_STACKSIZE           (2 * configMINIMAL_STACK_SIZE)
 
 //The radio channel. From 0 to 125
 #define RADIO_CHANNEL 80
@@ -230,10 +236,10 @@
 // Define to force initialization of expansion board drivers. For test-rig and programming.
 //#define FORCE_EXP_DETECT
 
-/**
- * \def PRINT_OS_DEBUG_INFO
- * Print with an interval information about freertos mem/stack usage to console.
- */
+// /**
+//  * \def PRINT_OS_DEBUG_INFO
+//  * Print with an interval information about freertos mem/stack usage to console.
+//  */
 //#define PRINT_OS_DEBUG_INFO
 
 
@@ -246,11 +252,11 @@
 //#define T_LAUCH_MOTORS
 //#define T_LAUCH_MOTOR_TEST
 //#define MOTOR_RAMPUP_TEST
-/**
- * \def ADC_OUTPUT_RAW_DATA
- * When defined the gyro data will be written to the UART channel.
- * The UART must be configured to run really fast, e.g. in 2Mb/s.
- */
+// /**
+//  * \def ADC_OUTPUT_RAW_DATA
+//  * When defined the gyro data will be written to the UART channel.
+//  * The UART must be configured to run really fast, e.g. in 2Mb/s.
+//  */
 //#define ADC_OUTPUT_RAW_DATA
 
 #if defined(UART_OUTPUT_TRACE_DATA) && defined(ADC_OUTPUT_RAW_DATA)
