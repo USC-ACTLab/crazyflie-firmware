@@ -53,5 +53,26 @@ void controllerAerolink(control_t *control,
     }
 }
 
+// Param Groups
+PARAM_GROUP_START(aerolink)
+/**
+ * @brief Moment of inertia around X-axis [kg*m^2]
+ */
+PARAM_ADD(PARAM_FLOAT, Ixx, &Ixx)
+/**
+ * @brief Moment of inertia around Y-axis [kg*m^2]
+ */
+PARAM_ADD(PARAM_FLOAT, Iyy, &Iyy)
+/**
+ * @brief Moment of inertia around Z-axis [kg*m^2]
+ */
+PARAM_ADD(PARAM_FLOAT, Izz, &Izz)
+/**
+ * @brief Number of modules in the structure
+ * It's pretty unlikely we will fly more than 255 modules atm, but I do hope one day we will!
+ */
+PARAM_ADD(PARAM_UINT8, num_modules, &num_module_in_structure)
+
+PARAM_GROUP_STOP(aerolink)
 
 // LOG Groups
