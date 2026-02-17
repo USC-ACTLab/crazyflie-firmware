@@ -1,4 +1,5 @@
 obj-y += attitude_pid_controller.o
+obj-y += aerolink_attitude_controller.o
 obj-y += controller_indi.o
 obj-y += controller_mellinger.o
 obj-y += controller.o

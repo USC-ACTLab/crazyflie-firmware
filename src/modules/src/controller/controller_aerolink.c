@@ -7,7 +7,7 @@
  */
 
 #include "controller_aerolink.h"
-#include "attitude_controller.h"
+#include "aerolink_attitude_controller.h"
 
 #include <stdbool.h>
 
@@ -21,8 +21,13 @@
 
 #define ATTITUDE_UPDATE_DT    (float)(1.0f/ATTITUDE_RATE)
 
+static float Ixx, Iyy, Izz;
+static unsigned int num_module_in_structure;
+static bool isinit = false;
+static bool receivedStructureInfo = false;
+
 void controllerAerolinkInit(void) {
-    attitudeControllerInit(ATTITUDE_UPDATE_DT);
+    aerolinkAttitudeControllerInit(ATTITUDE_UPDATE_DT);
 }
 
 
@@ -38,7 +43,14 @@ void controllerAerolink(control_t *control,
                         const sensorData_t *sensors,
                         const state_t *state,
                         const stabilizerStep_t stabilizerStep) {
-    // to be implemented
+    control->controlMode = controlModeStructure;
+    if (RATE_DO_EXECUTE(ATTITUDE_RATE, stabilizerStep)) {
+        float rollOutput, pitchOutput, yawOutput;
+        aerolinkAttitudeControllerCorrectAttitudePID(state->attitude.roll, state->attitude.pitch, state->attitude.yaw,
+                                                    setpoint->attitude.roll, setpoint->attitude.pitch, setpoint->attitude.yaw,
+                                                    sensors->gyro.x, sensors->gyro.y, sensors->gyro.z,
+                                                    &rollOutput, &pitchOutput, &yawOutput);
+    }
 }
 
 
