@@ -85,6 +85,9 @@
 
 #define DEFAULT_RX_TIMEOUT 10000
 
+// Time (ms) without received packets after which we probe the chip over SPI
+static const uint32_t locoHealthProbeMs = 2000;
+
 // The anchor position can be set using parameters
 // As an option you can set a static position in this file and set
 // combinedAnchorPositionOk to enable sending the anchor rangings to the Kalman filter
@@ -126,8 +129,25 @@ static uwbAlgorithm_t *algorithm = &uwbTwrTagAlgorithm;
 #endif
 
 static bool isInit = false;
+
+uint8_t locoEnableEstimator = 1;
+
 static TaskHandle_t uwbTaskHandle = 0;
 static SemaphoreHandle_t algoSemaphore;
+
+// Liveness tracking for the positioning watchdog. chipResponding is written by
+// uwbTask() and read by locoDeckStatus() from the supervisor task.
+static volatile bool chipResponding = false;
+static uint32_t lastUwbActivityTick = 0;
+// CHAN_CTRL value captured at init. It survives mode switches but reverts to
+// default on a chip reset (e.g. power glitch), so a mismatch means the chip
+// has lost its configuration even though it still answers over SPI.
+static uint32_t expectedChanCtrl = 0;
+
+// Event counters for mode-switch diagnostics
+static uint32_t dbgRxCount = 0;
+static uint32_t dbgTimeoutCount = 0;
+static uint32_t dbgFailedCount = 0;
 static dwDevice_t dwm_device;
 static dwDevice_t *dwm = &dwm_device;
 
@@ -169,14 +189,17 @@ static void txCallback(dwDevice_t *dev)
 
 static void rxCallback(dwDevice_t *dev)
 {
+  dbgRxCount++;
   timeout = algorithm->onEvent(dev, eventPacketReceived);
 }
 
 static void rxTimeoutCallback(dwDevice_t * dev) {
+  dbgTimeoutCount++;
   timeout = algorithm->onEvent(dev, eventReceiveTimeout);
 }
 
 static void rxFailedCallback(dwDevice_t * dev) {
+  dbgFailedCount++;
   timeout = algorithm->onEvent(dev, eventReceiveFailed);
 }
 
@@ -282,11 +305,25 @@ static bool switchToMode(const lpsMode_t newMode) {
   bool result = false;
 
   if (lpsMode_auto != newMode && newMode <= LPS_NUMBER_OF_ALGORITHMS) {
+    // Print stats for the mode we are leaving before resetting counters
+    DEBUG_PRINT("DWM: leaving %s -> going to %s (rx=%lu timeout=%lu failed=%lu)\n",
+                algorithmsList[algoOptions.currentRangingMode].name,
+                algorithmsList[newMode].name,
+                (unsigned long)dbgRxCount,
+                (unsigned long)dbgTimeoutCount,
+                (unsigned long)dbgFailedCount);
+    dbgRxCount = 0;
+    dbgTimeoutCount = 0;
+    dbgFailedCount = 0;
+
     algoOptions.currentRangingMode = newMode;
     algorithm = algorithmsList[algoOptions.currentRangingMode].algorithm;
 
     algorithm->init(dwm);
     timeout = algorithm->onEvent(dwm, eventTimeout);
+    DEBUG_PRINT("DWM: mode %s init done, first timeout=%lu ms\n",
+                algorithmsList[algoOptions.currentRangingMode].name,
+                (unsigned long)timeout);
 
     result = true;
   }
@@ -321,8 +358,17 @@ static void processAutoModeSwitching() {
         if (algorithm->isRangingOk()) {
           // We have found an algorithm, stop searching and lock to it.
           algoOptions.modeAutoSearchActive = false;
-          DEBUG_PRINT("Automatic mode: detected %s\n", algorithmsList[algoOptions.currentRangingMode].name);
+          DEBUG_PRINT("Automatic mode: detected %s (rx=%lu timeout=%lu failed=%lu)\n",
+                      algorithmsList[algoOptions.currentRangingMode].name,
+                      (unsigned long)dbgRxCount,
+                      (unsigned long)dbgTimeoutCount,
+                      (unsigned long)dbgFailedCount);
         } else {
+          DEBUG_PRINT("DWM: %s ranging NOT ok (rx=%lu timeout=%lu failed=%lu), trying next\n",
+                      algorithmsList[algoOptions.currentRangingMode].name,
+                      (unsigned long)dbgRxCount,
+                      (unsigned long)dbgTimeoutCount,
+                      (unsigned long)dbgFailedCount);
           lpsMode_t newMode = autoModeSearchGetNextMode();
           autoModeSearchTryMode(newMode, now);
         }
@@ -361,16 +407,35 @@ static void uwbTask(void* parameters) {
     handleModeSwitch();
     xSemaphoreGive(algoSemaphore);
 
-    if (ulTaskNotifyTake(pdTRUE, timeout / portTICK_PERIOD_MS) > 0) {
+    // Bound the wait so the health probe runs even when the algorithm requests a
+    // very long (TDoA2 uses portMAX_DELAY) timeout
+    uint32_t waitTicks = timeout / portTICK_PERIOD_MS;
+    const uint32_t probeTicks = M2T(locoHealthProbeMs);
+    if (waitTicks > probeTicks) {
+      waitTicks = probeTicks;
+    }
+
+    if (ulTaskNotifyTake(pdTRUE, waitTicks) > 0) {
+      lastUwbActivityTick = xTaskGetTickCount();
+      chipResponding = true;
       do{
         xSemaphoreTake(algoSemaphore, portMAX_DELAY);
         dwHandleInterrupt(dwm);
         xSemaphoreGive(algoSemaphore);
       } while(digitalRead(GPIO_PIN_IRQ) != 0);
     } else {
+      bool probeFailed = false;
       xSemaphoreTake(algoSemaphore, portMAX_DELAY);
       timeout = algorithm->onEvent(dwm, eventTimeout);
+      if ((xTaskGetTickCount() - lastUwbActivityTick) > M2T(locoHealthProbeMs)) {
+        const bool wasResponding = chipResponding;
+        chipResponding = (dwSpiRead32(dwm, CHAN_CTRL, NO_SUB) == expectedChanCtrl);
+        probeFailed = wasResponding && !chipResponding;
+      }
       xSemaphoreGive(algoSemaphore);
+      if (probeFailed) {
+        DEBUG_PRINT("Watchdog: DW1000 lost its configuration (CHAN_CTRL mismatch)\n");
+      }
     }
   }
 }
@@ -453,7 +518,11 @@ static void spiSetSpeed(dwDevice_t* dev, dwSpiSpeed_t speed)
   }
   else if (speed == dwSpiSpeedHigh)
   {
+#if defined(CONFIG_DECK_LOCO_SPI_SPEED_12MHZ)
+    spiSpeed = SPI_BAUDRATE_12MHZ;
+#else
     spiSpeed = SPI_BAUDRATE_21MHZ;
+#endif
   }
 }
 
@@ -469,6 +538,15 @@ static dwOps_t dwOps = {
   .delayms = delayms,
 };
 
+static uint8_t locoDeckStatus() {
+  // If init failed we can't trust the chip state to probe it
+  if (!isInit) {
+    return 1;
+  }
+
+  return chipResponding ? 0 : 1;
+}
+
 /*********** Deck driver initialization ***************/
 
 static void dwm1000Init(DeckInfo *info)
@@ -477,25 +555,15 @@ static void dwm1000Init(DeckInfo *info)
 
   spiBegin();
 
-  // Set up interrupt
-  SYSCFG_EXTILineConfig(EXTI_PortSource, EXTI_PinSource);
-
-  EXTI_InitStructure.EXTI_Line = EXTI_LineN;
-  EXTI_InitStructure.EXTI_Mode = EXTI_Mode_Interrupt;
-  EXTI_InitStructure.EXTI_Trigger = EXTI_Trigger_Rising;
-  EXTI_InitStructure.EXTI_LineCmd = ENABLE;
-  EXTI_Init(&EXTI_InitStructure);
-
   // Init pins
   pinMode(CS_PIN, OUTPUT);
-  pinMode(GPIO_PIN_RESET, OUTPUT);
   pinMode(GPIO_PIN_IRQ, INPUT);
 
-  // Reset the DW1000 chip
+  // Reset the DW1000 chip. Pull-low. Not allowed to drive high.
+  pinMode(GPIO_PIN_RESET, OUTPUT);
   digitalWrite(GPIO_PIN_RESET, 0);
-  vTaskDelay(M2T(10));
-  digitalWrite(GPIO_PIN_RESET, 1);
-  vTaskDelay(M2T(10));
+  vTaskDelay(M2T(1));
+  pinMode(GPIO_PIN_RESET, INPUT);
 
   // Initialize the driver
   dwInit(dwm, &dwOps);       // Init libdw
@@ -541,12 +609,31 @@ static void dwm1000Init(DeckInfo *info)
 
   dwCommitConfiguration(dwm);
 
+  // Verify the DW1000 is still responding over SPI after configuration.
+  // 0xFFFFFFFF means the chip's SPI interface is unresponsive (MISO floating).
+  if (dwSpiRead32(dwm, SYS_MASK, NO_SUB) == 0xFFFFFFFFul) {
+    DEBUG_PRINT("DWM: ERROR - DW1000 not responding after configure (SPI issue). Deck will not work.\n");
+    isInit = false;
+    return;
+  }
+  expectedChanCtrl = dwSpiRead32(dwm, CHAN_CTRL, NO_SUB);
+  chipResponding = true;
+
   memoryRegisterHandler(&memDef);
 
   algoSemaphore= xSemaphoreCreateMutex();
 
   xTaskCreate(uwbTask, LPS_DECK_TASK_NAME, LPS_DECK_STACKSIZE, NULL,
                     LPS_DECK_TASK_PRI, &uwbTaskHandle);
+
+  // Set up interrupt
+  SYSCFG_EXTILineConfig(EXTI_PortSource, EXTI_PinSource);
+
+  EXTI_InitStructure.EXTI_Line = EXTI_LineN;
+  EXTI_InitStructure.EXTI_Mode = EXTI_Mode_Interrupt;
+  EXTI_InitStructure.EXTI_Trigger = EXTI_Trigger_Rising;
+  EXTI_InitStructure.EXTI_LineCmd = ENABLE;
+  EXTI_Init(&EXTI_InitStructure);
 
   isInit = true;
 }
@@ -595,6 +682,7 @@ static const DeckDriver dwm1000_deck = {
 
   .init = dwm1000Init,
   .test = dwm1000Test,
+  .status = locoDeckStatus,
 };
 
 DECK_DRIVER(dwm1000_deck);
@@ -614,6 +702,21 @@ PARAM_ADD_CORE(PARAM_UINT8 | PARAM_RONLY, bcDWM1000, &isInit)
 PARAM_ADD_CORE(PARAM_UINT8 | PARAM_RONLY, bcLoco, &isInit)
 
 PARAM_GROUP_STOP(deck)
+
+
+static uint8_t locoStatusLogger(uint32_t timestamp, void* data) {
+  return locoDeckStatus();
+}
+static logByFunction_t locoStatusLoggerDef = {.acquireUInt8 = locoStatusLogger, .data = 0};
+
+LOG_GROUP_START(deckStatus)
+
+/**
+ * @brief Loco deck status: 0 = ok, non-zero = error
+ */
+LOG_ADD_BY_FUNCTION(LOG_UINT8, bcLoco, &locoStatusLoggerDef)
+
+LOG_GROUP_STOP(deckStatus)
 
 LOG_GROUP_START(ranging)
 LOG_ADD(LOG_UINT16, state, &algoOptions.rangingState)
@@ -698,5 +801,14 @@ PARAM_GROUP_START(loco)
  * |   3   | TDoA 3 |\n
  */
 PARAM_ADD_CORE(PARAM_UINT8, mode, &algoOptions.userRequestedMode)
+
+/**
+ * @brief Feed loco measurements into the state estimator (default: 1)
+ *
+ * Set to 0 to stop pushing loco (TWR/TDoA distance, TDoA and absolute height)
+ * measurements into the Kalman filter, while keeping the loco system otherwise
+ * running.
+ */
+PARAM_ADD_CORE(PARAM_UINT8, fwdToEstimator, &locoEnableEstimator)
 
 PARAM_GROUP_STOP(loco)

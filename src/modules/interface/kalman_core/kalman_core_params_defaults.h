@@ -35,6 +35,8 @@
  * 2. kalman_core.c - kalmanCoreDefaultParams() function for Python bindings
  */
 
+#include "platform_defaults.h"
+
 // Process noise defaults depend on configuration
 #ifdef CONFIG_ESTIMATOR_KALMAN_GENERAL_PURPOSE
 #define KALMAN_CORE_PROC_NOISE_DEFAULTS \
@@ -46,8 +48,8 @@
   .procNoiseAcc_z = 1.0f
 #endif
 
-#ifdef CONFIG_STIMATOR_KALMAN_INITIAL_YAW_STD
-#define KALMAN_INITIAL_YAW_STD (CONFIG_STIMATOR_KALMAN_INITIAL_YAW_STD / 1000.0f)
+#ifdef CONFIG_ESTIMATOR_KALMAN_INITIAL_YAW_STD
+#define KALMAN_INITIAL_YAW_STD (CONFIG_ESTIMATOR_KALMAN_INITIAL_YAW_STD / 1000.0f)
 #else
 #define KALMAN_INITIAL_YAW_STD 0.01f
 #endif
@@ -85,4 +87,12 @@
   .initialYaw = 0.0, \
   \
   /* Roll/pitch/yaw zero reversion is on by default. Will be overridden by estimatorKalmanInit() if requested by the deck. */ \
-  .attitudeReversion = 0.001f
+  .attitudeReversion = 0.001f, \
+  \
+  .dragB_x = DRAG_B_X, \
+  .dragB_y = DRAG_B_Y, \
+  .dragB_z = DRAG_B_Z, \
+  \
+  .cop_x = CENTER_OF_PRESSURE_X, \
+  .cop_y = CENTER_OF_PRESSURE_Y, \
+  .cop_z = CENTER_OF_PRESSURE_Z

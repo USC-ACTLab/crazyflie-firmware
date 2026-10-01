@@ -39,6 +39,8 @@ docs/api/log_param_doc.json
 docs/api
 
 build/
+.cache/
+/compile_commands.json
 # To avoid that /tools/build is ignored
 !/tools/*
 
@@ -48,3 +50,7 @@ build/
 *.elf
 
 tools/dependency/web/data.js
+
+# Clangd
+compile_commands.json
+.cache/**

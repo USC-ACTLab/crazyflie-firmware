@@ -42,6 +42,9 @@
 // Requires kbuild config ENABLE_AUTO_SHUTDOWN to be activated.
 #define DEFAULT_SYSTEM_SHUTDOWN_TIMEOUT_MIN       5
 
+#define HEALTH_DISABLE_PROP_TEST true
+#define HEALTH_DISABLE_BAT_TEST true
+
 // Default PID gains
 #define PID_ROLL_RATE_KP  50.0
 #define PID_ROLL_RATE_KI  0.0
@@ -152,3 +155,19 @@
 #define SUPERVISOR_TUMBLE_CHECK_ACCEPTED_UPSIDEDOWN_TIME 200
 
 #define YAW_MAX_DELTA 30.0
+
+// Drag and center of pressure
+// NOTE: For X, these values are not constant but depends on dihedral angle. Influence seems to be negligible.
+#define DRAG_B_X 4.2f
+#define DRAG_B_Y 1.8f
+#define DRAG_B_Z 0.3f
+#define CENTER_OF_PRESSURE_X 0.0f
+#define CENTER_OF_PRESSURE_Y 0.0f
+#define CENTER_OF_PRESSURE_Z 0.03f
+
+// Flow deck position offset (in meters)
+// Note that this depends on flowdeck placement and might vary. These values assume placement directly under the legs with the STL provided here:
+// https://github.com/flapper-drones/3Dmodels/blob/main/Bitcraze_flowdeck_support%20v17.stl
+#define FLOWDECK_POS_X 0.0f 
+#define FLOWDECK_POS_Y 0.0f
+#define FLOWDECK_POS_Z -0.12f

@@ -43,4 +43,21 @@ config CPX_UART2_BAUDRATE
   help
       Set the baudrate that will be used for CPX on UART2
 
+config RADIO_ACTIVITY_TIMEOUT_MS
+  int "Radio activity timeout (ms)"
+  default 1000
+  help
+      Timeout in milliseconds since the last radio packet was received
+      before the radio is considered inactive.
+
+config RADIO_ASSERT_ON_COM_PROBLEM
+  bool "Assert on radio communication problem"
+  default y
+  help
+      In case of any radio communication problem, such as queue overflow 
+      or checksum error, assert. This is often a sign of a overloaded system.
+      Since the assert will make the Crazyflie cut power to the motors, 
+      this might not always be wanted and it might be better to
+      sactifice communcation.
+
 endmenu
